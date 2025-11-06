@@ -73,10 +73,9 @@ export function Joystick({
     HapticService.lightTap();
   }, [onStop]);
 
-  // Pan gesture with multi-touch support
+  // Pan gesture - exclusive touch handling (no simultaneous gestures)
   const panGesture = Gesture.Pan()
     .maxPointers(1)
-    .simultaneousWithExternalGesture()
     .onUpdate((event: any) => {
       "worklet";
       const dx = event.translationX;

@@ -42,7 +42,6 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
 
   const panGesture = Gesture.Pan()
     .maxPointers(1)
-    .simultaneousWithExternalGesture()
     .onStart(() => {
       "worklet";
       offsetY.value = translateY.value;

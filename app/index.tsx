@@ -79,39 +79,40 @@ export default function ControlScreen() {
 
       if (!sendCommandFn || !connectedDeviceId) return;
 
-      // Determine direction based on joystick position and gear
-      const moveThreshold = 20; // Minimum movement to trigger motor
-      const turnThreshold = 35; // Difference between left/right before turning kicks in
+      // Get joystick position: +x = Right, -x = Left, +y = Forward, -y = Backward
+      const { x, y } = data;
+
+      // Thresholds
+      const deadzone = 0.15; // Minimum joystick movement to register
+      const turnThreshold = 0.6; // X must be > 0.6 to trigger turn (very sideways)
       let directionCommand = "S";
 
-      // Check if we should move forward or backward based on gear
-      const shouldMoveForward = currentGear === "1" || currentGear === "2";
-      const shouldMoveBackward = currentGear === "R";
+      // Determine command based on joystick position
+      // Priority: Forward movement unless joystick is strongly sideways
 
-      if (
-        shouldMoveForward &&
-        (speeds.left > moveThreshold || speeds.right > moveThreshold)
-      ) {
-        // Moving forward (Gear 1 or 2)
-        if (Math.abs(speeds.left - speeds.right) < turnThreshold) {
-          directionCommand = "F"; // Straight forward - speeds are similar
-        } else if (speeds.left > speeds.right) {
-          directionCommand = "FR"; // Forward Right
+      // Check if joystick is strongly tilted sideways (near horizontal)
+      const isStrongSidewaysMovement = Math.abs(x) > turnThreshold;
+      const hasForwardMovement = Math.abs(y) > deadzone;
+
+      if (isStrongSidewaysMovement && Math.abs(x) > Math.abs(y)) {
+        // Strong sideways tilt AND more sideways than forward = Turn
+        if (x > 0) {
+          directionCommand = "R"; // +x = Right turn (pivot)
         } else {
-          directionCommand = "FL"; // Forward Left
+          directionCommand = "L"; // -x = Left turn (pivot)
         }
-      } else if (
-        shouldMoveBackward &&
-        (speeds.left > moveThreshold || speeds.right > moveThreshold)
-      ) {
-        // Moving backward (Gear R - joystick forward = car backward)
-        if (Math.abs(speeds.left - speeds.right) < turnThreshold) {
-          directionCommand = "B"; // Straight backward - speeds are similar
-        } else if (speeds.left > speeds.right) {
-          directionCommand = "BR"; // Backward Right
-        } else {
-          directionCommand = "BL"; // Backward Left
+      } else if (hasForwardMovement) {
+        // Forward/backward movement (including diagonals)
+        // Check gear to determine direction
+        const shouldMoveForward = currentGear === "1" || currentGear === "2";
+        const shouldMoveBackward = currentGear === "R";
+
+        if (y > 0 && shouldMoveForward) {
+          directionCommand = "F"; // +y in forward gears = Forward
+        } else if (y > 0 && shouldMoveBackward) {
+          directionCommand = "B"; // +y in reverse gear = Backward
         }
+        // Ignore -y (backward joystick movement) since we use gears for reverse
       }
 
       // Send direction command if it changed
@@ -121,16 +122,34 @@ export default function ControlScreen() {
         speedSentRef.current = false; // Reset speed flag when direction changes
       }
 
-      // Send speed command based on gear (only once per movement)
+      // Send speed command based on gear and direction (only once per movement)
       if (directionCommand !== "S" && !speedSentRef.current) {
+        // Adjust speed differently for forward vs turning
+        const isTurning = directionCommand === "L" || directionCommand === "R";
+
         if (currentGear === "2") {
-          // High speed - send more + commands
-          sendCommandFn("+").catch(console.error);
-          setTimeout(() => sendCommandFn("+").catch(console.error), 100);
-          setTimeout(() => sendCommandFn("+").catch(console.error), 200);
+          // High speed
+          if (isTurning) {
+            // Turning: 2× + commands
+            sendCommandFn("+").catch(console.error);
+            setTimeout(() => sendCommandFn("+").catch(console.error), 100);
+          } else {
+            // Forward: 4× + commands (faster than turning)
+            sendCommandFn("+").catch(console.error);
+            setTimeout(() => sendCommandFn("+").catch(console.error), 80);
+            setTimeout(() => sendCommandFn("+").catch(console.error), 160);
+            setTimeout(() => sendCommandFn("+").catch(console.error), 240);
+          }
         } else if (currentGear === "1") {
-          // Medium speed - send one + command
-          sendCommandFn("+").catch(console.error);
+          // Medium speed
+          if (isTurning) {
+            // Turning: 1× + command
+            sendCommandFn("+").catch(console.error);
+          } else {
+            // Forward: 2× + commands (faster than turning)
+            sendCommandFn("+").catch(console.error);
+            setTimeout(() => sendCommandFn("+").catch(console.error), 100);
+          }
         }
         // Gear R uses the same speed as Gear 1
         speedSentRef.current = true;
@@ -169,8 +188,8 @@ export default function ControlScreen() {
         sendCommandFn("S").catch(console.error);
         lastCommandRef.current = null;
 
-        // Set MAX speed based on gear - reduced to prevent motor overload
-        const maxSpeed = gear === "2" ? 180 : 100; // Gear 2: 180 (~70%), Gear 1 & R: 100 (~40%)
+        // Set MAX speed based on gear
+        const maxSpeed = gear === "2" ? 255 : 100; // Gear 2: 255 (full power), Gear 1 & R: 100 (~40%)
         setTimeout(() => {
           sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
           console.log(`Gear ${gear}: MAX speed set to ${maxSpeed}`);
@@ -187,10 +206,6 @@ export default function ControlScreen() {
     (isOpen: boolean) => {
       toggleClaw();
       if (sendCommandFn && connectedDeviceId) {
-        // Send servo commands: "O" for Open, "C" for Close
-        // Alternative formats if these don't work:
-        // - "SERVO:180" for open, "SERVO:0" for close
-        // - "G" for grip (close), "U" for ungrip (open)
         const command = isOpen ? "O" : "C";
         console.log(`Claw command: ${command} (${isOpen ? "OPEN" : "CLOSE"})`);
         sendCommandFn(command).catch(console.error);
@@ -230,19 +245,25 @@ export default function ControlScreen() {
       <View style={styles.mainContent}>
         {/* Left Side - Joystick */}
         <View style={styles.leftSection}>
-          <Joystick
-            size={180}
-            onMove={handleJoystickMove}
-            onStop={handleJoystickStop}
-            deadzone={0.1}
-          />
+          <View style={styles.joystickWrapper}>
+            <Joystick
+              size={180}
+              onMove={handleJoystickMove}
+              onStop={handleJoystickStop}
+              deadzone={0.1}
+            />
+          </View>
         </View>
 
         {/* Right Side - Controls */}
         <View style={styles.rightSection}>
           <View style={styles.controlRow}>
-            <GearSelector onGearChange={handleGearChange} size={200} />
-            <ClawControl onToggle={handleClawToggle} size={120} />
+            <View style={styles.gearWrapper}>
+              <GearSelector onGearChange={handleGearChange} size={200} />
+            </View>
+            <View style={styles.clawWrapper}>
+              <ClawControl onToggle={handleClawToggle} size={120} />
+            </View>
           </View>
         </View>
       </View>
@@ -289,25 +310,48 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     padding: 16,
-    gap: 24,
+    paddingLeft: 32, // Add left padding
+    paddingRight: 32, // Balance right padding
+    justifyContent: "space-between", // Space between joystick and controls
   },
   leftSection: {
-    flex: 1.2,
+    flex: 0, // Don't flex, use fixed size
     justifyContent: "center",
-    alignItems: "center",
+    alignItems: "flex-start", // Align left
     gap: 12,
   },
-  rightSection: {
-    flex: 0.8,
-    justifyContent: "space-evenly",
+  joystickWrapper: {
+    width: 220,
+    height: 220,
+    justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "transparent",
+  },
+  rightSection: {
+    flex: 0, // Don't flex, use fixed size
+    justifyContent: "center",
+    alignItems: "flex-end", // Align right
     paddingVertical: 16,
   },
   controlRow: {
     flexDirection: "row",
     gap: 16,
+    justifyContent: "flex-end", // Align right
+    alignItems: "center",
+  },
+  gearWrapper: {
+    width: 220,
+    height: 220,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "transparent",
+  },
+  clawWrapper: {
+    width: 140,
+    height: 140,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "transparent",
   },
   statusBar: {
     backgroundColor: "#DCF9E8",
