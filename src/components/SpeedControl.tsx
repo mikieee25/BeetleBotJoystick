@@ -1,5 +1,7 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Pressable, Text } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { StyleSheet, View, Text } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { runOnJS } from "react-native-reanimated";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { HapticService } from "@services/hapticService";
 
@@ -11,49 +13,79 @@ interface SpeedControlProps {
 export function SpeedControl({ onSpeedChange, size = 120 }: SpeedControlProps) {
   const [speed, setSpeed] = useState(50);
 
-  const handleIncrease = async () => {
+  const handleIncrease = useCallback(async () => {
     if (speed < 100) {
       await HapticService.lightTap();
       const newSpeed = Math.min(100, speed + 10);
       setSpeed(newSpeed);
       onSpeedChange?.(newSpeed);
     }
-  };
+  }, [onSpeedChange, speed]);
 
-  const handleDecrease = async () => {
+  const handleDecrease = useCallback(async () => {
     if (speed > 0) {
       await HapticService.lightTap();
       const newSpeed = Math.max(0, speed - 10);
       setSpeed(newSpeed);
       onSpeedChange?.(newSpeed);
     }
-  };
+  }, [onSpeedChange, speed]);
+
+  const decreaseGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .maxDuration(350)
+        .simultaneousWithExternalGesture()
+        .onEnd(() => {
+          "worklet";
+          runOnJS(handleDecrease)();
+        }),
+    [handleDecrease]
+  );
+
+  const increaseGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .maxDuration(350)
+        .simultaneousWithExternalGesture()
+        .onEnd(() => {
+          "worklet";
+          runOnJS(handleIncrease)();
+        }),
+    [handleIncrease]
+  );
 
   return (
     <View style={styles.container}>
       <Text style={styles.label}>SPEED</Text>
       <View style={styles.controlsContainer}>
-        <Pressable
-          style={[styles.button, styles.decreaseButton, { width: size * 0.35 }]}
-          onPress={handleDecrease}
-        >
-          <MaterialCommunityIcons
-            name="minus"
-            size={size * 0.25}
-            color="#999"
-          />
-        </Pressable>
+        <GestureDetector gesture={decreaseGesture}>
+          <Animated.View
+            style={[styles.button, styles.decreaseButton, { width: size * 0.35 }]}
+          >
+            <MaterialCommunityIcons
+              name="minus"
+              size={size * 0.25}
+              color="#999"
+            />
+          </Animated.View>
+        </GestureDetector>
 
         <View style={[styles.speedDisplay, { width: size * 0.25 }]}>
           <Text style={styles.speedText}>{speed}</Text>
         </View>
 
-        <Pressable
-          style={[styles.button, styles.increaseButton, { width: size * 0.35 }]}
-          onPress={handleIncrease}
-        >
-          <MaterialCommunityIcons name="plus" size={size * 0.25} color="#999" />
-        </Pressable>
+        <GestureDetector gesture={increaseGesture}>
+          <Animated.View
+            style={[styles.button, styles.increaseButton, { width: size * 0.35 }]}
+          >
+            <MaterialCommunityIcons
+              name="plus"
+              size={size * 0.25}
+              color="#999"
+            />
+          </Animated.View>
+        </GestureDetector>
       </View>
     </View>
   );

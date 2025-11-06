@@ -1,5 +1,7 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Pressable, Text } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { StyleSheet, Text } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { runOnJS } from "react-native-reanimated";
 import Svg, { Path } from "react-native-svg";
 import { HapticService } from "@services/hapticService";
 
@@ -11,26 +13,38 @@ interface ClawControlProps {
 export function ClawControl({ onToggle, size = 120 }: ClawControlProps) {
   const [isClosed, setIsClosed] = useState(false);
 
-  const handlePress = async () => {
+  const handlePress = useCallback(async () => {
     await HapticService.mediumTap();
     const newState = !isClosed;
     setIsClosed(newState);
     onToggle?.(!newState); // Send opposite - when closed=true, send open=false
-  };
+  }, [isClosed, onToggle]);
+
+  const tapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .maxDuration(350)
+        .simultaneousWithExternalGesture()
+        .onEnd(() => {
+          "worklet";
+          runOnJS(handlePress)();
+        }),
+    [handlePress]
+  );
 
   return (
-    <Pressable
-      style={[
-        styles.container,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-        },
-        isClosed && styles.containerClosed,
-      ]}
-      onPress={handlePress}
-    >
+    <GestureDetector gesture={tapGesture}>
+      <Animated.View
+        style={[
+          styles.container,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+          },
+          isClosed && styles.containerClosed,
+        ]}
+      >
       {isClosed ? (
         <Svg width={size * 0.75} height={size * 0.75} viewBox="24 23 77 78">
           <Path
@@ -46,10 +60,11 @@ export function ClawControl({ onToggle, size = 120 }: ClawControlProps) {
           />
         </Svg>
       )}
-      <Text style={[styles.label, isClosed && styles.labelClosed]}>
-        {isClosed ? "CLOSE" : "OPEN"}
-      </Text>
-    </Pressable>
+        <Text style={[styles.label, isClosed && styles.labelClosed]}>
+          {isClosed ? "CLOSE" : "OPEN"}
+        </Text>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 

@@ -75,7 +75,9 @@ export function Joystick({
 
   // Pan gesture - exclusive touch handling (no simultaneous gestures)
   const panGesture = Gesture.Pan()
-    .maxPointers(1)
+    .maxPointers(2)
+    .minPointers(1)
+    .simultaneousWithExternalGesture(Gesture.Native())
     .onUpdate((event: any) => {
       "worklet";
       const dx = event.translationX;
