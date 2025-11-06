@@ -21,13 +21,13 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
   const [selectedGear, setSelectedGear] = useState<GearType>("1");
 
   const gears: GearType[] = ["2", "1", "R"];
-  const gearPositions = { "2": -1, "1": 0, R: 1 };
   const sliderHeight = size - 60;
   const segmentHeight = sliderHeight / 2;
 
-  // Shared value for slider position
+  // Shared values for slider position
   const translateY = useSharedValue(0);
-  const offsetY = useSharedValue(0);
+  const startY = useSharedValue(0);
+  const isDragging = useSharedValue(false);
 
   const updateGear = useCallback(
     (newGear: GearType) => {
@@ -40,37 +40,17 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
     [selectedGear, onGearChange]
   );
 
-  const panGesture = Gesture.Pan()
-    .maxPointers(1)
-    .onStart(() => {
+  const snapToGear = useCallback(
+    (position: number) => {
       "worklet";
-      offsetY.value = translateY.value;
-    })
-    .onUpdate((event: any) => {
-      "worklet";
-      const dy = event.translationY;
-
-      // Add the offset to maintain continuity
-      const newPosition = offsetY.value + dy;
-
-      // Clamp the movement
-      const clampedY = Math.max(
-        -segmentHeight,
-        Math.min(segmentHeight, newPosition)
-      );
-      translateY.value = clampedY;
-    })
-    .onEnd(() => {
-      "worklet";
-      const position = translateY.value;
-
       let targetGear: GearType = "1";
       let targetPosition = 0;
 
-      if (position < -segmentHeight / 2) {
+      // Snap to nearest gear position
+      if (position < -segmentHeight * 0.4) {
         targetGear = "2";
         targetPosition = -segmentHeight;
-      } else if (position > segmentHeight / 2) {
+      } else if (position > segmentHeight * 0.4) {
         targetGear = "R";
         targetPosition = segmentHeight;
       } else {
@@ -78,17 +58,66 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
         targetPosition = 0;
       }
 
-      translateY.value = withTiming(targetPosition, {
-        duration: 200,
-        easing: Easing.out(Easing.cubic),
-      });
+      return { targetGear, targetPosition };
+    },
+    [segmentHeight]
+  );
 
-      runOnJS(updateGear)(targetGear);
+  const panGesture = Gesture.Pan()
+    .maxPointers(1)
+    .onBegin(() => {
+      "worklet";
+      isDragging.value = true;
+      startY.value = translateY.value;
+    })
+    .onUpdate((event) => {
+      "worklet";
+      if (!isDragging.value) return;
+
+      const newPosition = startY.value + event.translationY;
+
+      // Clamp movement with slight overscroll
+      const maxOverscroll = 10;
+      const clampedY = Math.max(
+        -segmentHeight - maxOverscroll,
+        Math.min(segmentHeight + maxOverscroll, newPosition)
+      );
+      
+      translateY.value = clampedY;
+    })
+    .onEnd(() => {
+      "worklet";
+      isDragging.value = false;
+
+      const { targetGear, targetPosition } = snapToGear(translateY.value);
+
+      // Smooth spring animation to snap position
+      translateY.value = withSpring(
+        targetPosition,
+        {
+          damping: 20,
+          stiffness: 200,
+          mass: 0.5,
+        },
+        () => {
+          runOnJS(updateGear)(targetGear);
+        }
+      );
+    })
+    .onFinalize(() => {
+      "worklet";
+      isDragging.value = false;
     });
 
   const sliderAnimatedStyle = useAnimatedStyle(() => {
+    // Add slight scale when dragging for better feedback
+    const scale = isDragging.value ? 1.1 : 1;
+    
     return {
-      transform: [{ translateY: translateY.value }],
+      transform: [
+        { translateY: translateY.value },
+        { scale },
+      ],
     };
   });
 
