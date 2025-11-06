@@ -1,0 +1,289 @@
+/**
+ * BeetleBot ESP32 Arduino Sketch
+ * 
+ * Receives Bluetooth commands from React Native app and controls:
+ * - Two DC motors (left and right) via motor driver
+ * - One servo motor for claw mechanism
+ * 
+ * Hardware Connections:
+ * - Motor Driver (L298N or similar):
+ *   - Left Motor: ENA (Pin 25), IN1 (Pin 26), IN2 (Pin 27)
+ *   - Right Motor: ENB (Pin 32), IN3 (Pin 33), IN4 (Pin 14)
+ * - Servo Motor: Signal Pin 15
+ * 
+ * BLE Service UUID: 4fafc201-1fb5-459e-8fcc-c5c9c331914b
+ * BLE Characteristic UUID: beb5483e-36e1-4688-b7f5-ea07361b26a8
+ */
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <ESP32Servo.h>
+#include <ArduinoJson.h>
+
+// BLE UUIDs - Must match React Native app
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+// Motor Driver Pins - Left Motor
+#define LEFT_MOTOR_ENA 25
+#define LEFT_MOTOR_IN1 26
+#define LEFT_MOTOR_IN2 27
+
+// Motor Driver Pins - Right Motor
+#define RIGHT_MOTOR_ENB 32
+#define RIGHT_MOTOR_IN3 33
+#define RIGHT_MOTOR_IN4 14
+
+// Servo Pin
+#define SERVO_PIN 15
+
+// PWM Properties
+#define PWM_FREQ 5000
+#define PWM_RESOLUTION 8
+#define PWM_CHANNEL_LEFT 0
+#define PWM_CHANNEL_RIGHT 1
+
+// Claw positions
+#define CLAW_OPEN_ANGLE 90
+#define CLAW_CLOSED_ANGLE 0
+
+// Global variables
+BLEServer *pServer = NULL;
+BLECharacteristic *pCharacteristic = NULL;
+Servo clawServo;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+String currentGear = "1";
+
+// BLE Server Callbacks
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    deviceConnected = true;
+    Serial.println("Device connected");
+  }
+
+  void onDisconnect(BLEServer *pServer) {
+    deviceConnected = false;
+    Serial.println("Device disconnected");
+  }
+};
+
+// BLE Characteristic Callbacks
+class MyCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+
+    if (value.length() > 0) {
+      String jsonString = String(value.c_str());
+      Serial.println("Received: " + jsonString);
+      processCommand(jsonString);
+    }
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("BeetleBot ESP32 Starting...");
+
+  // Initialize motor pins
+  pinMode(LEFT_MOTOR_IN1, OUTPUT);
+  pinMode(LEFT_MOTOR_IN2, OUTPUT);
+  pinMode(RIGHT_MOTOR_IN3, OUTPUT);
+  pinMode(RIGHT_MOTOR_IN4, OUTPUT);
+
+  // Setup PWM for motor speed control
+  ledcSetup(PWM_CHANNEL_LEFT, PWM_FREQ, PWM_RESOLUTION);
+  ledcSetup(PWM_CHANNEL_RIGHT, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttachPin(LEFT_MOTOR_ENA, PWM_CHANNEL_LEFT);
+  ledcAttachPin(RIGHT_MOTOR_ENB, PWM_CHANNEL_RIGHT);
+
+  // Initialize servo
+  clawServo.attach(SERVO_PIN);
+  clawServo.write(CLAW_OPEN_ANGLE);
+
+  // Stop motors initially
+  stopMotors();
+
+  // Initialize BLE
+  BLEDevice::init("BeetleBot-ESP32");
+
+  // Create BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(
+      CHARACTERISTIC_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  Serial.println("BLE advertising started. Waiting for connection...");
+}
+
+void loop() {
+  // Handle disconnection/reconnection
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500);
+    pServer->startAdvertising();
+    Serial.println("Start advertising again");
+    stopMotors();
+    oldDeviceConnected = deviceConnected;
+  }
+
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+
+  delay(10);
+}
+
+/**
+ * Process incoming JSON command
+ */
+void processCommand(String jsonString) {
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, jsonString);
+
+  if (error) {
+    Serial.print("JSON parse error: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // Extract command data
+  const char *type = doc["type"];
+  int leftSpeed = doc["leftSpeed"];
+  int rightSpeed = doc["rightSpeed"];
+  const char *gear = doc["gear"];
+  bool clawOpen = doc["clawOpen"];
+
+  // Store current gear
+  currentGear = String(gear);
+
+  // Handle different command types
+  if (strcmp(type, "joystick") == 0) {
+    controlMotors(leftSpeed, rightSpeed);
+  } else if (strcmp(type, "stop") == 0) {
+    stopMotors();
+  } else if (strcmp(type, "brake") == 0) {
+    brakeMotors();
+  } else if (strcmp(type, "gear") == 0) {
+    Serial.println("Gear changed to: " + currentGear);
+    // Gear changes are handled by direction in controlMotors
+  } else if (strcmp(type, "claw") == 0) {
+    controlClaw(clawOpen);
+  }
+}
+
+/**
+ * Control motors based on speed values
+ * Speed range: -100 to 100
+ * Negative = reverse, Positive = forward
+ */
+void controlMotors(int leftSpeed, int rightSpeed) {
+  // Apply gear modifications
+  if (currentGear == "R") {
+    // Reverse gear - invert directions
+    leftSpeed = -leftSpeed;
+    rightSpeed = -rightSpeed;
+  } else if (currentGear == "1") {
+    // Gear 1 - reduced speed (50%)
+    leftSpeed = leftSpeed / 2;
+    rightSpeed = rightSpeed / 2;
+  }
+  // Gear 2 - full speed (no modification needed)
+
+  // Control left motor
+  if (leftSpeed > 0) {
+    // Forward
+    digitalWrite(LEFT_MOTOR_IN1, HIGH);
+    digitalWrite(LEFT_MOTOR_IN2, LOW);
+    ledcWrite(PWM_CHANNEL_LEFT, map(abs(leftSpeed), 0, 100, 0, 255));
+  } else if (leftSpeed < 0) {
+    // Reverse
+    digitalWrite(LEFT_MOTOR_IN1, LOW);
+    digitalWrite(LEFT_MOTOR_IN2, HIGH);
+    ledcWrite(PWM_CHANNEL_LEFT, map(abs(leftSpeed), 0, 100, 0, 255));
+  } else {
+    // Stop
+    digitalWrite(LEFT_MOTOR_IN1, LOW);
+    digitalWrite(LEFT_MOTOR_IN2, LOW);
+    ledcWrite(PWM_CHANNEL_LEFT, 0);
+  }
+
+  // Control right motor
+  if (rightSpeed > 0) {
+    // Forward
+    digitalWrite(RIGHT_MOTOR_IN3, HIGH);
+    digitalWrite(RIGHT_MOTOR_IN4, LOW);
+    ledcWrite(PWM_CHANNEL_RIGHT, map(abs(rightSpeed), 0, 100, 0, 255));
+  } else if (rightSpeed < 0) {
+    // Reverse
+    digitalWrite(RIGHT_MOTOR_IN3, LOW);
+    digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+    ledcWrite(PWM_CHANNEL_RIGHT, map(abs(rightSpeed), 0, 100, 0, 255));
+  } else {
+    // Stop
+    digitalWrite(RIGHT_MOTOR_IN3, LOW);
+    digitalWrite(RIGHT_MOTOR_IN4, LOW);
+    ledcWrite(PWM_CHANNEL_RIGHT, 0);
+  }
+}
+
+/**
+ * Stop motors gradually (coast to stop)
+ */
+void stopMotors() {
+  digitalWrite(LEFT_MOTOR_IN1, LOW);
+  digitalWrite(LEFT_MOTOR_IN2, LOW);
+  digitalWrite(RIGHT_MOTOR_IN3, LOW);
+  digitalWrite(RIGHT_MOTOR_IN4, LOW);
+  ledcWrite(PWM_CHANNEL_LEFT, 0);
+  ledcWrite(PWM_CHANNEL_RIGHT, 0);
+}
+
+/**
+ * Brake motors (active braking)
+ */
+void brakeMotors() {
+  // Set both motor pins HIGH for active braking
+  digitalWrite(LEFT_MOTOR_IN1, HIGH);
+  digitalWrite(LEFT_MOTOR_IN2, HIGH);
+  digitalWrite(RIGHT_MOTOR_IN3, HIGH);
+  digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+  ledcWrite(PWM_CHANNEL_LEFT, 255);
+  ledcWrite(PWM_CHANNEL_RIGHT, 255);
+  delay(100);
+  stopMotors();
+}
+
+/**
+ * Control claw servo
+ */
+void controlClaw(bool open) {
+  if (open) {
+    clawServo.write(CLAW_OPEN_ANGLE);
+    Serial.println("Claw opened");
+  } else {
+    clawServo.write(CLAW_CLOSED_ANGLE);
+    Serial.println("Claw closed");
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "BeetleBot Improved",
+    "slug": "beetlebot-improved",
+    "version": "2.0.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "light",
+    "scheme": "beetlebot",
+    "platforms": ["ios", "android", "web"],
+    "android": {
+      "package": "com.beetlebot.improved",
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.beetlebot.improved",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app needs Bluetooth to connect to your BeetleBot robot.",
+        "NSBluetoothPeripheralUsageDescription": "This app needs Bluetooth to communicate with your BeetleBot robot.",
+        "NSLocationWhenInUseUsageDescription": "This app needs location permission to scan for Bluetooth devices."
+      }
+    },
+    "web": {
+      "output": "static"
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [],
+          "bluetoothAlwaysPermission": "Allow BeetleBot to connect to your robot via Bluetooth"
+        }
+      ]
+    ]
+  }
+}
