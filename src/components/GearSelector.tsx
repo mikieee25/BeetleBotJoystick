@@ -1,10 +1,9 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { StyleSheet, View, Text } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   Easing,
   runOnJS,
@@ -20,10 +19,8 @@ interface GearSelectorProps {
 export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
   const [selectedGear, setSelectedGear] = useState<GearType>("1");
 
-  const gears: GearType[] = ["2", "1", "R"];
-  const gearPositions = { "2": -1, "1": 0, R: 1 };
-  const sliderHeight = size - 60;
-  const segmentHeight = sliderHeight / 2;
+  const sliderHeight = size - 80;
+  const segmentHeight = sliderHeight / 3;
 
   // Track slider position and offset for smooth dragging
   const translateY = useSharedValue(0);
@@ -66,17 +63,14 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
 
       // Snap to nearest gear based on drag position
       let targetGear: GearType = "1";
-      let targetPosition = 0;
+      let targetPosition = segmentHeight;
 
       if (position < -segmentHeight / 2) {
         targetGear = "2";
         targetPosition = -segmentHeight;
       } else if (position > segmentHeight / 2) {
-        targetGear = "R";
-        targetPosition = segmentHeight;
-      } else {
         targetGear = "1";
-        targetPosition = 0;
+        targetPosition = segmentHeight;
       }
 
       // Animate to final position
@@ -117,7 +111,7 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
           <View
             style={[
               styles.gearLabelLeft,
-              { top: "50%", transform: [{ translateY: -11 }] },
+              { bottom: 0},
             ]}
           >
             <Text
@@ -130,17 +124,6 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
             </Text>
           </View>
 
-          {/* Bottom - Reverse */}
-          <View style={[styles.gearLabelLeft, { bottom: 0 }]}>
-            <Text
-              style={[
-                styles.gearText,
-                selectedGear === "R" && styles.gearTextActive,
-              ]}
-            >
-              R
-            </Text>
-          </View>
         </View>
 
         {/* Slider track with draggable handle */}

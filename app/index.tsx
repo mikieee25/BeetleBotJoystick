@@ -75,15 +75,15 @@ export default function ControlScreen() {
       const direction = JoystickMath.detectCardinalDirection(data, 45);
 
       let directionCommand = "S";
-      const isReverse = currentGear === "R";
+      
 
       // Convert cardinal direction to ESP32 command
       switch (direction) {
         case "NORTH":
-          directionCommand = isReverse ? "B" : "F";
+          directionCommand = "F";
           break;
         case "SOUTH":
-          directionCommand = isReverse ? "B" : "S";
+          directionCommand = "B";
           break;
         case "EAST":
           directionCommand = "R";
@@ -108,7 +108,7 @@ export default function ControlScreen() {
       if (directionCommand !== "S" && !speedSentRef.current) {
         // Set max speed once per direction change
         if (!maxSpeedSetRef.current) {
-          const maxSpeed = currentGear === "2" ? 150 : 70;
+          const maxSpeed = currentGear === "2" ? 180 : 60;
           sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
           maxSpeedSetRef.current = true;
         }

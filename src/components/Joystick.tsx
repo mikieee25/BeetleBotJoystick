@@ -1,23 +1,22 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef } from "react";
-import { StyleSheet, View, Text } from "react-native";
-import {
-  Gesture,
-  GestureDetector,
-  PanGesture,
-} from "react-native-gesture-handler";
+import React, { useCallback, useRef } from "react";
+import { StyleSheet, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
   Easing,
 } from "react-native-reanimated";
+import Svg, { Line } from "react-native-svg";
 import type { JoystickData } from "../types";
 import { JoystickMath } from "@utils/joystickMath";
 import { HapticService } from "@services/hapticService";
+
+const AnimatedLine = Animated.createAnimatedComponent(Line);
 
 interface JoystickProps {
   size?: number;
@@ -39,6 +38,15 @@ export function Joystick({
   // Shared animation values for joystick stick position
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
+
+  const lineAnimatedProps = useAnimatedProps(() => {
+    return {
+      x1: radius,
+      y1: radius,
+      x2: radius + translateX.value,
+      y2: radius + translateY.value,
+    };
+  });
 
   // Track if joystick is actively being moved
   const isMovingRef = useRef(false);
@@ -151,44 +159,18 @@ export function Joystick({
             />
           </View>
 
-          {/* Cardinal direction indicators */}
-          <Text
-            style={[
-              styles.directionLabel,
-              styles.labelNorth,
-              { fontSize: size * 0.12 },
-            ]}
-          >
-            ↑
-          </Text>
-          <Text
-            style={[
-              styles.directionLabel,
-              styles.labelSouth,
-              { fontSize: size * 0.12 },
-            ]}
-          >
-            ↓
-          </Text>
-          <Text
-            style={[
-              styles.directionLabel,
-              styles.labelEast,
-              { fontSize: size * 0.12 },
-            ]}
-          >
-            →
-          </Text>
-          <Text
-            style={[
-              styles.directionLabel,
-              styles.labelWest,
-              { fontSize: size * 0.12 },
-            ]}
-          >
-            ←
-          </Text>
+          {/* Connector from center to joystick stick */}
+          <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+            <AnimatedLine
+              animatedProps={lineAnimatedProps}
+              stroke="#b0b0b0"
+              strokeWidth={18}
+              strokeLinecap="round"
+            />
+          </Svg>
 
+         
+          
           {/* Center reference point */}
           <View
             style={[
@@ -262,7 +244,7 @@ const styles = StyleSheet.create({
     height: 1,
   },
   centerDot: {
-    backgroundColor: "#999",
+    backgroundColor: "#b0b0b0",
     position: "absolute",
   },
   stick: {

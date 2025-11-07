@@ -27,7 +27,7 @@ export interface MotorCommand {
 /**
  * Gear type for the vehicle
  */
-export type GearType = "2" | "1" | "R";
+export type GearType = "2" | "1";
 
 /**
  * Bluetooth device information
