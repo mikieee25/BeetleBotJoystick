@@ -108,7 +108,7 @@ export default function ControlScreen() {
       if (directionCommand !== "S" && !speedSentRef.current) {
         // Set max speed once per direction change
         if (!maxSpeedSetRef.current) {
-          const maxSpeed = currentGear === "2" ? 120 : 60;
+          const maxSpeed = currentGear === "2" ? 150 : 70;
           sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
           maxSpeedSetRef.current = true;
         }
