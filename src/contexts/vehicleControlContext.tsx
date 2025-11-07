@@ -7,24 +7,21 @@ import React, {
 } from "react";
 import type { JoystickData, GearType } from "../types";
 
+// Global vehicle control state (joystick, gear, claw, speed)
 interface VehicleControlContextType {
-  // Joystick state
   joystickData: JoystickData | null;
   setJoystickData: (data: JoystickData | null) => void;
 
-  // Gear state
   currentGear: GearType;
   setGear: (gear: GearType) => void;
 
-  // Claw state
   clawOpen: boolean;
   toggleClaw: () => void;
 
-  // Speed multiplier
   speedMultiplier: number;
   setSpeedMultiplier: (multiplier: number) => void;
 
-  // Reset all controls
+  // Reset all controls to default state
   resetControls: () => void;
 }
 
@@ -38,14 +35,17 @@ export function VehicleControlProvider({ children }: { children: ReactNode }) {
   const [clawOpen, setClawOpen] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
 
+  // Update current gear selection
   const setGear = useCallback((gear: GearType) => {
     setCurrentGear(gear);
   }, []);
 
+  // Toggle claw open/closed state
   const toggleClaw = useCallback(() => {
     setClawOpen((prev: boolean) => !prev);
   }, []);
 
+  // Reset all state to initial values
   const resetControls = useCallback(() => {
     setJoystickData(null);
     setCurrentGear("1");
@@ -72,6 +72,7 @@ export function VehicleControlProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Hook to access vehicle control context
 export function useVehicleControl() {
   const context = useContext(VehicleControlContext);
   if (context === undefined) {

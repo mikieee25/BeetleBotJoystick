@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, Text } from "react-native";
 import {
   Gesture,
   GestureDetector,
@@ -36,20 +36,19 @@ export function Joystick({
   const stickSize = size / 3;
   const maxDistance = radius - stickSize / 2;
 
-  // Shared values for animation
+  // Shared animation values for joystick stick position
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
-  // Track if joystick is currently moving
+  // Track if joystick is actively being moved
   const isMovingRef = useRef(false);
 
-  /**
-   * Calculate normalized joystick data and trigger callback
-   */
+  // Normalize joystick input and trigger callback with haptic feedback
   const updateJoystickPosition = useCallback(
     (dx: number, dy: number) => {
       const data = JoystickMath.normalize(dx, dy, maxDistance, deadzone);
 
+      // Trigger haptic feedback on initial movement
       if (data.distance > 0.1 && !isMovingRef.current) {
         isMovingRef.current = true;
         HapticService.lightTap();
@@ -62,9 +61,7 @@ export function Joystick({
     [maxDistance, deadzone, onMove]
   );
 
-  /**
-   * Handle joystick release
-   */
+  // Reset joystick and trigger stop callback
   const handleJoystickStop = useCallback(() => {
     isMovingRef.current = false;
     if (onStop) {
@@ -73,7 +70,7 @@ export function Joystick({
     HapticService.lightTap();
   }, [onStop]);
 
-  // Pan gesture - exclusive touch handling (no simultaneous gestures)
+  // Pan gesture: detect touch movement and constrain to circular boundary
   const panGesture = Gesture.Pan()
     .maxPointers(2)
     .minPointers(1)
@@ -83,10 +80,9 @@ export function Joystick({
       const dx = event.translationX;
       const dy = event.translationY;
 
-      // Calculate distance from center
+      // Calculate distance and constrain stick to circle boundary
       const distance = Math.sqrt(dx * dx + dy * dy);
 
-      // Limit movement to max distance (visual constraint)
       let newX = dx;
       let newY = dy;
 
@@ -96,16 +92,15 @@ export function Joystick({
         newY = Math.sin(angle) * maxDistance;
       }
 
-      // Update animated values
+      // Update animated position
       translateX.value = newX;
       translateY.value = newY;
 
-      // Call JS thread callback
       runOnJS(updateJoystickPosition)(newX, newY);
     })
     .onEnd(() => {
       "worklet";
-      // Reset position with smooth timing animation
+      // Animate stick back to center smoothly
       translateX.value = withTiming(0, {
         duration: 200,
         easing: Easing.out(Easing.cubic),
@@ -118,7 +113,7 @@ export function Joystick({
       runOnJS(handleJoystickStop)();
     });
 
-  // Animated style for stick
+  // Animated style for stick position updates
   const stickAnimatedStyle = useAnimatedStyle(() => {
     return {
       transform: [
@@ -131,7 +126,7 @@ export function Joystick({
   return (
     <View style={[styles.wrapper, { width: size + 40, height: size + 40 }]}>
       <View style={[styles.container, { width: size, height: size }]}>
-        {/* Outer base circle */}
+        {/* Outer base circle with crosshairs */}
         <View
           style={[
             styles.base,
@@ -142,7 +137,7 @@ export function Joystick({
             },
           ]}
         >
-          {/* Directional indicators */}
+          {/* Cardinal direction guide lines */}
           <View style={styles.directionalLines}>
             <View
               style={[styles.line, styles.lineVertical, { height: size * 0.6 }]}
@@ -156,7 +151,45 @@ export function Joystick({
             />
           </View>
 
-          {/* Center dot */}
+          {/* Cardinal direction indicators */}
+          <Text
+            style={[
+              styles.directionLabel,
+              styles.labelNorth,
+              { fontSize: size * 0.12 },
+            ]}
+          >
+            ↑
+          </Text>
+          <Text
+            style={[
+              styles.directionLabel,
+              styles.labelSouth,
+              { fontSize: size * 0.12 },
+            ]}
+          >
+            ↓
+          </Text>
+          <Text
+            style={[
+              styles.directionLabel,
+              styles.labelEast,
+              { fontSize: size * 0.12 },
+            ]}
+          >
+            →
+          </Text>
+          <Text
+            style={[
+              styles.directionLabel,
+              styles.labelWest,
+              { fontSize: size * 0.12 },
+            ]}
+          >
+            ←
+          </Text>
+
+          {/* Center reference point */}
           <View
             style={[
               styles.centerDot,
@@ -168,7 +201,7 @@ export function Joystick({
             ]}
           />
 
-          {/* Movable stick */}
+          {/* Draggable stick (interactive element) */}
           <GestureDetector gesture={panGesture}>
             <Animated.View
               style={[
@@ -251,5 +284,30 @@ const styles = StyleSheet.create({
     height: "60%",
     backgroundColor: "#FFB366",
     borderRadius: 999,
+  },
+  directionLabel: {
+    position: "absolute",
+    color: "#b0b0b0",
+    fontWeight: "700",
+  },
+  labelNorth: {
+    top: "8%",
+    left: "50%",
+    marginLeft: -8,
+  },
+  labelSouth: {
+    bottom: "8%",
+    left: "50%",
+    marginLeft: -8,
+  },
+  labelEast: {
+    right: "8%",
+    top: "50%",
+    marginTop: -12,
+  },
+  labelWest: {
+    left: "8%",
+    top: "50%",
+    marginTop: -12,
   },
 });

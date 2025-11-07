@@ -6,7 +6,7 @@ import { GearSelector } from "@components/GearSelector";
 import { ClawControl } from "@components/ClawControl";
 import { BluetoothConnectorV2 } from "@components/BluetoothConnectorV2";
 import { useVehicleControl } from "@contexts/vehicleControlContext";
-import { JoystickMath } from "@utils/joystickMath";
+import { JoystickMath, type CardinalDirection } from "@utils/joystickMath";
 import type { JoystickData, GearType } from "../src/types";
 
 export default function ControlScreen() {
@@ -28,23 +28,18 @@ export default function ControlScreen() {
     ((cmd: string) => Promise<void>) | null
   >(null);
 
-  /**
-   * Handle Bluetooth connection
-   */
+  // Initialize connection and send startup commands to ESP32
   const handleConnected = useCallback(
     (deviceId: string, sendCommand: (cmd: string) => Promise<void>) => {
       setConnectedDeviceId(deviceId);
       setSendCommandFn(() => sendCommand);
 
-      // Send initial commands (matching friend's code)
+      // Send reset and max speed commands to establish communication
       const initCommands = async () => {
         try {
           await sendCommand("/");
-          console.log("Sent initialization command: /");
-          // Wait a bit before sending max speed
           await new Promise((resolve) => setTimeout(resolve, 200));
-          await sendCommand("MAX:100"); // Start with safer default (100)
-          console.log("Sent initial max speed command: MAX:100");
+          await sendCommand("MAX:100"); // Set initial motor speed
         } catch (error) {
           console.error("Initialization error:", error);
         }
@@ -54,160 +49,130 @@ export default function ControlScreen() {
     []
   );
 
-  /**
-   * Handle Bluetooth disconnection
-   */
+  // Clear connection state on disconnect
   const handleDisconnected = useCallback(() => {
     setConnectedDeviceId(null);
     setSendCommandFn(null);
   }, []);
 
-  // Refs to track previous state
+  // Refs to prevent duplicate commands and track state changes
   const lastCommandRef = useRef<string | null>(null);
   const speedSentRef = useRef<boolean>(false);
+  const maxSpeedSetRef = useRef<boolean>(false);
 
-  /**
-   * Handle joystick movement and send motor commands
-   */
+  // Process joystick input: detect direction and send motor commands (4-way cardinal only)
   const handleJoystickMove = useCallback(
     (data: JoystickData) => {
       setJoystickData(data);
 
-      // Calculate motor speeds using arcade drive
+      // Calculate motor speeds for visual feedback
       const speeds = JoystickMath.calculateMotorSpeeds(data, "arcade", 100);
       setMotorSpeeds(speeds);
 
       if (!sendCommandFn || !connectedDeviceId) return;
 
-      // Get joystick position: +x = Right, -x = Left, +y = Forward, -y = Backward
-      const { x, y } = data;
+      // Map joystick position to 4 cardinal directions (N/S/E/W)
+      const direction = JoystickMath.detectCardinalDirection(data, 45);
 
-      // Thresholds
-      const deadzone = 0.15; // Minimum joystick movement to register
-      const turnThreshold = 0.6; // X must be > 0.6 to trigger turn (very sideways)
       let directionCommand = "S";
+      const isReverse = currentGear === "R";
 
-      // Determine command based on joystick position
-      // Priority: Forward movement unless joystick is strongly sideways
-
-      // Check if joystick is strongly tilted sideways (near horizontal)
-      const isStrongSidewaysMovement = Math.abs(x) > turnThreshold;
-      const hasForwardMovement = Math.abs(y) > deadzone;
-
-      if (isStrongSidewaysMovement && Math.abs(x) > Math.abs(y)) {
-        // Strong sideways tilt AND more sideways than forward = Turn
-        if (x > 0) {
-          directionCommand = "R"; // +x = Right turn (pivot)
-        } else {
-          directionCommand = "L"; // -x = Left turn (pivot)
-        }
-      } else if (hasForwardMovement) {
-        // Forward/backward movement (including diagonals)
-        // Check gear to determine direction
-        const shouldMoveForward = currentGear === "1" || currentGear === "2";
-        const shouldMoveBackward = currentGear === "R";
-
-        if (y > 0 && shouldMoveForward) {
-          directionCommand = "F"; // +y in forward gears = Forward
-        } else if (y > 0 && shouldMoveBackward) {
-          directionCommand = "B"; // +y in reverse gear = Backward
-        }
-        // Ignore -y (backward joystick movement) since we use gears for reverse
+      // Convert cardinal direction to ESP32 command
+      switch (direction) {
+        case "NORTH":
+          directionCommand = isReverse ? "B" : "F";
+          break;
+        case "SOUTH":
+          directionCommand = isReverse ? "B" : "S";
+          break;
+        case "EAST":
+          directionCommand = "R";
+          break;
+        case "WEST":
+          directionCommand = "L";
+          break;
+        case "CENTER":
+          directionCommand = "S";
+          break;
       }
 
-      // Send direction command if it changed
+      // Send direction command only if it changed
       if (directionCommand !== lastCommandRef.current) {
         sendCommandFn(directionCommand).catch(console.error);
         lastCommandRef.current = directionCommand;
-        speedSentRef.current = false; // Reset speed flag when direction changes
+        speedSentRef.current = false;
+        maxSpeedSetRef.current = false;
       }
 
-      // Send speed command based on gear and direction (only once per movement)
+      // Send speed increments immediately (no delays to avoid ESP32 timeout)
       if (directionCommand !== "S" && !speedSentRef.current) {
-        // Adjust speed differently for forward vs turning
+        // Set max speed once per direction change
+        if (!maxSpeedSetRef.current) {
+          const maxSpeed = currentGear === "2" ? 120 : 60;
+          sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
+          maxSpeedSetRef.current = true;
+        }
+
+        // Send speed increments based on gear and direction (forward vs turning)
         const isTurning = directionCommand === "L" || directionCommand === "R";
 
         if (currentGear === "2") {
-          // High speed
           if (isTurning) {
-            // Turning: 2× + commands
             sendCommandFn("+").catch(console.error);
-            setTimeout(() => sendCommandFn("+").catch(console.error), 100);
           } else {
-            // Forward: 4× + commands (faster than turning)
             sendCommandFn("+").catch(console.error);
-            setTimeout(() => sendCommandFn("+").catch(console.error), 80);
-            setTimeout(() => sendCommandFn("+").catch(console.error), 160);
-            setTimeout(() => sendCommandFn("+").catch(console.error), 240);
+            sendCommandFn("+").catch(console.error);
           }
         } else if (currentGear === "1") {
-          // Medium speed
           if (isTurning) {
-            // Turning: 1× + command
             sendCommandFn("+").catch(console.error);
           } else {
-            // Forward: 2× + commands (faster than turning)
             sendCommandFn("+").catch(console.error);
-            setTimeout(() => sendCommandFn("+").catch(console.error), 100);
+            sendCommandFn("+").catch(console.error);
           }
         }
-        // Gear R uses the same speed as Gear 1
         speedSentRef.current = true;
       }
     },
     [setJoystickData, sendCommandFn, connectedDeviceId, currentGear]
   );
 
-  /**
-   * Handle joystick release
-   */
+  // Stop joystick and reset motor speeds
   const handleJoystickStop = useCallback(() => {
     setJoystickData(null);
     setMotorSpeeds({ left: 0, right: 0 });
 
-    // Reset tracking
     lastCommandRef.current = null;
     speedSentRef.current = false;
 
     if (sendCommandFn && connectedDeviceId) {
-      sendCommandFn("S").catch(console.error); // Stop command
+      sendCommandFn("S").catch(console.error);
     }
   }, [setJoystickData, sendCommandFn, connectedDeviceId]);
 
-  /**
-   * Handle gear change
-   */
+  // Switch gear and stop motor to prevent momentum conflicts
   const handleGearChange = useCallback(
     (gear: GearType) => {
       setGear(gear);
-      // Reset speed tracking when gear changes
+      // Reset speed tracking for clean gear transition
       speedSentRef.current = false;
+      maxSpeedSetRef.current = false;
+      lastCommandRef.current = null;
 
-      // Stop the robot and set max speed based on gear
+      // Stop motor before changing gears
       if (sendCommandFn && connectedDeviceId) {
         sendCommandFn("S").catch(console.error);
-        lastCommandRef.current = null;
-
-        // Set MAX speed based on gear
-        const maxSpeed = gear === "2" ? 255 : 100; // Gear 2: 255 (full power), Gear 1 & R: 100 (~40%)
-        setTimeout(() => {
-          sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
-          console.log(`Gear ${gear}: MAX speed set to ${maxSpeed}`);
-        }, 100); // Small delay after stop command
       }
     },
     [setGear, sendCommandFn, connectedDeviceId]
   );
 
-  /**
-   * Handle claw toggle
-   */
+  // Toggle claw open/close and send command to robot
   const handleClawToggle = useCallback(
     (isOpen: boolean) => {
       toggleClaw();
       if (sendCommandFn && connectedDeviceId) {
         const command = isOpen ? "O" : "C";
-        console.log(`Claw command: ${command} (${isOpen ? "OPEN" : "CLOSE"})`);
         sendCommandFn(command).catch(console.error);
       }
     },
@@ -226,7 +191,7 @@ export default function ControlScreen() {
         },
       ]}
     >
-      {/* Header */}
+      {/* Header: App title and Bluetooth connection button */}
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>
@@ -241,9 +206,9 @@ export default function ControlScreen() {
         />
       </View>
 
-      {/* Main Controls */}
+      {/* Layout: Joystick on left, Gear/Claw controls on right */}
       <View style={styles.mainContent}>
-        {/* Left Side - Joystick */}
+        {/* Left: Joystick controller */}
         <View style={styles.leftSection}>
           <View style={styles.joystickWrapper}>
             <Joystick
@@ -255,7 +220,7 @@ export default function ControlScreen() {
           </View>
         </View>
 
-        {/* Right Side - Controls */}
+        {/* Right: Gear selector and claw toggle */}
         <View style={styles.rightSection}>
           <View style={styles.controlRow}>
             <View style={styles.gearWrapper}>
@@ -268,7 +233,7 @@ export default function ControlScreen() {
         </View>
       </View>
 
-      {/* Status Bar */}
+      {/* Status bar: Connection and current state indicators */}
       {connectedDeviceId && (
         <View style={styles.statusBar}>
           <Text style={styles.statusText}>✓ Connected</Text>

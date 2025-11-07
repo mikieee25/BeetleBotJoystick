@@ -4,6 +4,7 @@ import { BleManager, Device, Characteristic } from "react-native-ble-plx";
 import * as Location from "expo-location";
 import base64 from "base-64";
 
+// ESP32 BLE service and characteristic UUIDs
 const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
@@ -32,6 +33,7 @@ export const useBle = (): UseBleReturn => {
   );
   const [showDeviceModal, setShowDeviceModal] = useState(false);
 
+  // Initialize BLE manager on mount
   useEffect(() => {
     bleManagerRef.current = new BleManager();
 
@@ -42,6 +44,7 @@ export const useBle = (): UseBleReturn => {
     };
   }, []);
 
+  // Request required Bluetooth and location permissions
   const requestPermissions = async (): Promise<boolean> => {
     if (Platform.OS === "android") {
       if (Platform.Version >= 31) {
@@ -75,10 +78,10 @@ export const useBle = (): UseBleReturn => {
     return true;
   };
 
+  // Start BLE device scan and show modal with results
   const scanForDevices = async () => {
     const hasPermissions = await requestPermissions();
     if (!hasPermissions) {
-      console.log("Permissions not granted");
       return;
     }
 
@@ -96,6 +99,7 @@ export const useBle = (): UseBleReturn => {
           return;
         }
 
+        // Collect all devices with names
         if (scannedDevice && scannedDevice.name) {
           setDevicesMap((prevMap) => {
             const newMap = new Map(prevMap);
@@ -112,11 +116,13 @@ export const useBle = (): UseBleReturn => {
     }, 10000);
   };
 
+  // Stop active BLE scan
   const stopScan = () => {
     bleManagerRef.current?.stopDeviceScan();
     setIsScanning(false);
   };
 
+  // Connect to BLE device and discover services/characteristics
   const connectToDevice = async (deviceToConnect: Device) => {
     try {
       stopScan();
@@ -128,39 +134,13 @@ export const useBle = (): UseBleReturn => {
         throw new Error("Failed to connect to device");
       }
 
+      // Discover all available services and characteristics
       await connectedDevice.discoverAllServicesAndCharacteristics();
-
-      // List all services and characteristics
-      console.log("🔍 Discovering services...");
-      const services = await connectedDevice.services();
-      console.log(`Found ${services.length} services:`);
-
-      for (const service of services) {
-        console.log(`  📦 Service: ${service.uuid}`);
-        const characteristics = await service.characteristics();
-        console.log(`     Found ${characteristics.length} characteristics:`);
-        for (const char of characteristics) {
-          console.log(`       📝 Characteristic: ${char.uuid}`);
-          console.log(`          - isReadable: ${char.isReadable}`);
-          console.log(
-            `          - isWritableWithResponse: ${char.isWritableWithResponse}`
-          );
-          console.log(
-            `          - isWritableWithoutResponse: ${char.isWritableWithoutResponse}`
-          );
-          console.log(`          - isNotifiable: ${char.isNotifiable}`);
-        }
-      }
 
       deviceRef.current = connectedDevice;
       setDevice(connectedDevice);
       setConnectedDeviceId(connectedDevice.id);
       setShowDeviceModal(false);
-
-      console.log(
-        "Connected to device:",
-        connectedDevice.name || connectedDevice.id
-      );
     } catch (error) {
       console.error("Connection error:", error);
       deviceRef.current = null;
@@ -169,6 +149,7 @@ export const useBle = (): UseBleReturn => {
     }
   };
 
+  // Disconnect from currently connected BLE device
   const disconnectDevice = async () => {
     if (deviceRef.current) {
       try {
@@ -178,15 +159,14 @@ export const useBle = (): UseBleReturn => {
         deviceRef.current = null;
         setDevice(null);
         setConnectedDeviceId(null);
-        console.log("Disconnected from device");
       } catch (error) {
         console.error("Disconnect error:", error);
       }
     }
   };
 
+  // Send command string to ESP32 via BLE (base64 encoded)
   const sendCommand = async (command: string) => {
-    // Use ref to avoid closure issues with state
     const currentDevice = deviceRef.current;
 
     if (!currentDevice) {
@@ -195,41 +175,28 @@ export const useBle = (): UseBleReturn => {
     }
 
     try {
-      console.log("Sending command:", command);
-      console.log("Service UUID:", SERVICE_UUID);
-      console.log("Characteristic UUID:", CHARACTERISTIC_UUID);
-
-      // Convert string to base64 for BLE transmission
+      // Encode command to base64 for BLE transmission
       const encodedCommand = base64.encode(command);
-      console.log("Base64 encoded:", encodedCommand);
 
-      // Try WITH response first (more reliable)
+      // Try write with response first (more reliable), fallback to without response
       try {
         await currentDevice.writeCharacteristicWithResponseForService(
           SERVICE_UUID,
           CHARACTERISTIC_UUID,
           encodedCommand
         );
-        console.log("✓ Command sent WITH response");
       } catch (withResponseError) {
-        console.warn("Write with response failed, trying without response...");
-        // Fallback to without response
+        // Fallback to write without response if with-response fails
         await currentDevice.writeCharacteristicWithoutResponseForService(
           SERVICE_UUID,
           CHARACTERISTIC_UUID,
           encodedCommand
         );
-        console.log("✓ Command sent WITHOUT response");
       }
     } catch (error: any) {
       console.error("Send command error:", error);
-      console.error("Error details:", {
-        message: error?.message,
-        reason: error?.reason,
-        errorCode: error?.errorCode,
-      });
 
-      // Try to reconnect if write failed
+      // Clear connection if device was disconnected
       if (error instanceof Error && error.message.includes("disconnected")) {
         deviceRef.current = null;
         setDevice(null);

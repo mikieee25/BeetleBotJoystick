@@ -21,14 +21,15 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
   const [selectedGear, setSelectedGear] = useState<GearType>("1");
 
   const gears: GearType[] = ["2", "1", "R"];
+  const gearPositions = { "2": -1, "1": 0, R: 1 };
   const sliderHeight = size - 60;
   const segmentHeight = sliderHeight / 2;
 
-  // Shared values for slider position
+  // Track slider position and offset for smooth dragging
   const translateY = useSharedValue(0);
-  const startY = useSharedValue(0);
-  const isDragging = useSharedValue(false);
+  const offsetY = useSharedValue(0);
 
+  // Update selected gear and trigger callback
   const updateGear = useCallback(
     (newGear: GearType) => {
       if (newGear !== selectedGear) {
@@ -40,17 +41,37 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
     [selectedGear, onGearChange]
   );
 
-  const snapToGear = useCallback(
-    (position: number) => {
+  // Pan gesture: vertical dragging to switch gears
+  const panGesture = Gesture.Pan()
+    .maxPointers(1)
+    .onStart(() => {
       "worklet";
+      offsetY.value = translateY.value;
+    })
+    .onUpdate((event: any) => {
+      "worklet";
+      const dy = event.translationY;
+
+      // Apply offset for continuity and clamp to bounds
+      const newPosition = offsetY.value + dy;
+      const clampedY = Math.max(
+        -segmentHeight,
+        Math.min(segmentHeight, newPosition)
+      );
+      translateY.value = clampedY;
+    })
+    .onEnd(() => {
+      "worklet";
+      const position = translateY.value;
+
+      // Snap to nearest gear based on drag position
       let targetGear: GearType = "1";
       let targetPosition = 0;
 
-      // Snap to nearest gear position
-      if (position < -segmentHeight * 0.4) {
+      if (position < -segmentHeight / 2) {
         targetGear = "2";
         targetPosition = -segmentHeight;
-      } else if (position > segmentHeight * 0.4) {
+      } else if (position > segmentHeight / 2) {
         targetGear = "R";
         targetPosition = segmentHeight;
       } else {
@@ -58,66 +79,19 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
         targetPosition = 0;
       }
 
-      return { targetGear, targetPosition };
-    },
-    [segmentHeight]
-  );
+      // Animate to final position
+      translateY.value = withTiming(targetPosition, {
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+      });
 
-  const panGesture = Gesture.Pan()
-    .maxPointers(1)
-    .onBegin(() => {
-      "worklet";
-      isDragging.value = true;
-      startY.value = translateY.value;
-    })
-    .onUpdate((event) => {
-      "worklet";
-      if (!isDragging.value) return;
-
-      const newPosition = startY.value + event.translationY;
-
-      // Clamp movement with slight overscroll
-      const maxOverscroll = 10;
-      const clampedY = Math.max(
-        -segmentHeight - maxOverscroll,
-        Math.min(segmentHeight + maxOverscroll, newPosition)
-      );
-      
-      translateY.value = clampedY;
-    })
-    .onEnd(() => {
-      "worklet";
-      isDragging.value = false;
-
-      const { targetGear, targetPosition } = snapToGear(translateY.value);
-
-      // Smooth spring animation to snap position
-      translateY.value = withSpring(
-        targetPosition,
-        {
-          damping: 20,
-          stiffness: 200,
-          mass: 0.5,
-        },
-        () => {
-          runOnJS(updateGear)(targetGear);
-        }
-      );
-    })
-    .onFinalize(() => {
-      "worklet";
-      isDragging.value = false;
+      runOnJS(updateGear)(targetGear);
     });
 
+  // Animated style for slider handle
   const sliderAnimatedStyle = useAnimatedStyle(() => {
-    // Add slight scale when dragging for better feedback
-    const scale = isDragging.value ? 1.1 : 1;
-    
     return {
-      transform: [
-        { translateY: translateY.value },
-        { scale },
-      ],
+      transform: [{ translateY: translateY.value }],
     };
   });
 
@@ -125,9 +99,9 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
     <View style={[styles.container, { width: size, height: size }]}>
       <Text style={styles.title}>GEAR</Text>
       <View style={styles.sliderContainer}>
-        {/* Gear labels on the left side */}
+        {/* Gear labels (2, 1, R) */}
         <View style={[styles.gearLabelsLeft, { height: sliderHeight }]}>
-          {/* Top - Gear 2 */}
+          {/* Top - Gear 2 (High Speed) */}
           <View style={[styles.gearLabelLeft, { top: 0 }]}>
             <Text
               style={[
@@ -139,7 +113,7 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
             </Text>
           </View>
 
-          {/* Middle - Gear 1 */}
+          {/* Middle - Gear 1 (Medium Speed) */}
           <View
             style={[
               styles.gearLabelLeft,
@@ -169,9 +143,8 @@ export function GearSelector({ onGearChange, size = 140 }: GearSelectorProps) {
           </View>
         </View>
 
-        {/* Slider track */}
+        {/* Slider track with draggable handle */}
         <View style={[styles.sliderTrack, { height: sliderHeight }]}>
-          {/* Slider handle */}
           <GestureDetector gesture={panGesture}>
             <Animated.View style={[styles.sliderHandle, sliderAnimatedStyle]}>
               <View style={styles.handleInner} />

@@ -1,10 +1,8 @@
 import * as Haptics from "expo-haptics";
 
-/**
- * Haptic feedback service
- * Provides standardized haptic feedback for user interactions
- */
+// Provides standardized haptic feedback for user interactions
 export class HapticService {
+  // Light impact feedback for subtle interactions
   static async lightTap(): Promise<void> {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -13,6 +11,7 @@ export class HapticService {
     }
   }
 
+  // Medium impact feedback for standard interactions
   static async mediumTap(): Promise<void> {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -21,6 +20,7 @@ export class HapticService {
     }
   }
 
+  // Strong impact feedback for important actions
   static async heavyTap(): Promise<void> {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -29,6 +29,7 @@ export class HapticService {
     }
   }
 
+  // Success notification pattern
   static async success(): Promise<void> {
     try {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -37,6 +38,7 @@ export class HapticService {
     }
   }
 
+  // Warning notification pattern
   static async warning(): Promise<void> {
     try {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -45,6 +47,7 @@ export class HapticService {
     }
   }
 
+  // Error notification pattern
   static async error(): Promise<void> {
     try {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

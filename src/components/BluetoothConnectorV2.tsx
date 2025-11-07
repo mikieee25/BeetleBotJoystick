@@ -39,6 +39,7 @@ export function BluetoothConnectorV2({
     sendCommand,
   } = useBle();
 
+  // Handle device selection from modal
   const handleDeviceSelect = async (selectedDevice: Device) => {
     await HapticService.mediumTap();
     await connectToDevice(selectedDevice);
@@ -47,6 +48,7 @@ export function BluetoothConnectorV2({
     }
   };
 
+  // Handle disconnection with callback
   const handleDisconnect = async () => {
     await HapticService.mediumTap();
     await disconnectDevice();
@@ -55,6 +57,7 @@ export function BluetoothConnectorV2({
     }
   };
 
+  // Toggle connection state
   const handleConnectPress = async () => {
     if (connectedDeviceId) {
       await handleDisconnect();
@@ -68,6 +71,7 @@ export function BluetoothConnectorV2({
 
   return (
     <View style={styles.container}>
+      {/* Connection button: shows status and toggles scan/disconnect */}
       <Pressable
         style={[styles.button, isConnected && styles.buttonConnected]}
         onPress={handleConnectPress}
@@ -84,6 +88,7 @@ export function BluetoothConnectorV2({
         </Text>
       </Pressable>
 
+      {/* Device selection modal */}
       <Modal
         visible={showDeviceModal}
         transparent
@@ -92,6 +97,7 @@ export function BluetoothConnectorV2({
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            {/* Modal header with title and close button */}
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {isScanning ? "Scanning..." : "Select Device"}
@@ -106,6 +112,7 @@ export function BluetoothConnectorV2({
               </Pressable>
             </View>
 
+            {/* Scanning indicator */}
             {isScanning && devicesList.length === 0 && (
               <View style={styles.scanningContainer}>
                 <ActivityIndicator size="large" color="#FF9E42" />
@@ -115,6 +122,7 @@ export function BluetoothConnectorV2({
               </View>
             )}
 
+            {/* Device list */}
             <FlatList<Device>
               data={devicesList}
               keyExtractor={(item) => item.id}
