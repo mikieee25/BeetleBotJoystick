@@ -33,17 +33,31 @@ export class BluetoothService {
    * Initialize BLE Manager
    */
   async initialize(): Promise<void> {
-    const state = await this.bleManager.state();
-    if (state !== "PoweredOn") {
-      console.log("Bluetooth is not powered on. Waiting...");
-      await new Promise<void>((resolve) => {
-        const subscription = this.bleManager.onStateChange((newState) => {
-          if (newState === "PoweredOn") {
+    try {
+      const state = await this.bleManager.state();
+      console.log("BLE State:", state);
+
+      if (state !== "PoweredOn") {
+        console.log("Bluetooth is not powered on. Waiting...");
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
             subscription.remove();
-            resolve();
-          }
-        }, true);
-      });
+            reject(new Error("Bluetooth initialization timeout"));
+          }, 10000);
+
+          const subscription = this.bleManager.onStateChange((newState) => {
+            console.log("BLE State changed to:", newState);
+            if (newState === "PoweredOn") {
+              clearTimeout(timeout);
+              subscription.remove();
+              resolve();
+            }
+          }, true);
+        });
+      }
+    } catch (error) {
+      console.error("BLE initialization error:", error);
+      throw error;
     }
   }
 
@@ -54,27 +68,36 @@ export class BluetoothService {
     onDeviceFound: (device: Device) => void,
     durationMs: number = 10000
   ): Promise<void> {
-    await this.initialize();
+    try {
+      await this.initialize();
 
-    console.log("Starting BLE scan...");
+      console.log("Starting BLE scan...");
 
-    this.bleManager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        console.error("Scan error:", error);
-        return;
-      }
+      this.bleManager.startDeviceScan(
+        null,
+        { allowDuplicates: false },
+        (error, device) => {
+          if (error) {
+            console.error("Scan error:", error);
+            return;
+          }
 
-      if (device && device.name && device.name.includes("BeetleBot")) {
-        console.log("Found device:", device.name, device.id);
-        onDeviceFound(device);
-      }
-    });
+          if (device && device.name && device.name.includes("BeetleBot")) {
+            console.log("Found device:", device.name, device.id);
+            onDeviceFound(device);
+          }
+        }
+      );
 
-    // Stop scanning after duration
-    setTimeout(() => {
-      this.bleManager.stopDeviceScan();
-      console.log("Scan stopped");
-    }, durationMs);
+      // Stop scanning after duration
+      setTimeout(() => {
+        this.bleManager.stopDeviceScan();
+        console.log("Scan stopped");
+      }, durationMs);
+    } catch (error) {
+      console.error("Scan initialization error:", error);
+      throw error;
+    }
   }
 
   /**
