@@ -1,238 +1,210 @@
-# Beetlebot Improved
+# BeetleBot Joystick - Android Build Guide
 
-## Overview
+Build guide for the BeetleBot Joystick Android app on Fedora Gnome with zsh shell.
 
-A modern, production-ready implementation of the Beetlebot mobile control application. This app provides precise joystick control, multi-touch support, Bluetooth connectivity to ESP32, and real-time vehicle telemetry.
+## Prerequisites
 
-## Key Features
+### 1. Install Java Development Kit (JDK 21)
 
-### 🎮 **Joystick Control**
+```zsh
+# Install Java 21
+sudo dnf install java-21-openjdk java-21-openjdk-devel
 
-- **Multi-touch Support**: Uses `react-native-gesture-handler` and `react-native-reanimated` for smooth, performant gesture handling
-- **Arcade Drive Mode**: Forward/backward on Y-axis, steering on X-axis
-- **Customizable Deadzone**: Adjustable deadzone to ignore small unintended movements
-- **Real-time Feedback**: Visual and haptic feedback for user interaction
-- **Motor Speed Calculation**: Automatic calculation of left/right motor speeds from joystick input
-
-### 📡 **Bluetooth Connectivity**
-
-- **ESP32 Integration**: Seamless communication with ESP32-based vehicle controllers
-- **Device Management**: List and connect to available Bluetooth devices
-- **Command Queue**: Efficient command queuing system for reliable delivery
-- **Telemetry**: Receive and display vehicle telemetry data
-- **Auto-reconnect**: Maintains connection resilience
-
-### ⚙️ **Vehicle Control**
-
-- **Gear Selection**: Forward (D), Neutral (N), Reverse (R)
-- **Claw Control**: Open/close the robotic claw
-- **Speed Multiplier**: Adjustable speed limits (0-100%)
-- **Haptic Feedback**: Tactile feedback for all interactions
-
-### 🎨 **UI/UX**
-
-- **Landscape Orientation**: Optimized for landscape mobile gameplay
-- **Responsive Design**: Adapts to different screen sizes
-- **Modern Components**: Clean, intuitive interface
-- **Status Indicators**: Real-time connection and control state display
-
-## Architecture
-
-```
-beetlebot-improved/
-├── app/
-│   ├── _layout.tsx          # Root layout with providers
-│   └── index.tsx            # Main control screen
-├── src/
-│   ├── components/          # Reusable UI components
-│   │   ├── Joystick.tsx
-│   │   ├── GearSelector.tsx
-│   │   ├── ClawControl.tsx
-│   │   ├── SpeedControl.tsx
-│   │   └── BluetoothConnector.tsx
-│   ├── contexts/            # React contexts for state
-│   │   ├── bluetoothContext.tsx
-│   │   └── vehicleControlContext.tsx
-│   ├── services/            # Business logic services
-│   │   ├── bluetoothService.ts    # Bluetooth communication
-│   │   └── hapticService.ts       # Haptic feedback
-│   ├── types/               # TypeScript type definitions
-│   │   └── index.ts
-│   └── utils/               # Utility functions
-│       └── joystickMath.ts  # Math utilities for joystick
-├── package.json
-├── tsconfig.json
-├── app.json
-└── babel.config.js
+# Verify installation
+java -version
 ```
 
-## Type System
+Set the JAVA_HOME environment variable:
 
-All major features are fully typed with TypeScript:
+```zsh
+# Add to ~/.zshrc
+echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> ~/.zshrc
+echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.zshrc
 
-```typescript
-// Joystick data structure
-interface JoystickData {
-  x: number; // -1 to 1 (left/right)
-  y: number; // -1 to 1 (down/up)
-  angle: number; // -180 to 180 degrees
-  distance: number; // 0 to 1 (from center)
-  raw: { dx: number; dy: number };
-}
+# Reload configuration
+source ~/.zshrc
 
-// Motor command for ESP32
-interface MotorCommand {
-  type: "joystick" | "stop" | "brake" | "gear" | "claw";
-  leftSpeed: number; // -100 to 100
-  rightSpeed: number; // -100 to 100
-  gear: GearType; // 'D' | 'N' | 'R'
-  clawOpen: boolean;
-  timestamp: number;
-}
+# Verify
+echo $JAVA_HOME
 ```
 
-## Services
+### 2. Install Android SDK Command-line Tools
 
-### BluetoothService (Singleton)
+```zsh
+# Create Android SDK directory
+mkdir -p ~/Android/Sdk
+cd ~/Android/Sdk
 
-Handles all Bluetooth communication with ESP32:
+# Download command-line tools (check for latest version at https://developer.android.com/studio)
+wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 
-```typescript
-const bluetoothService = BluetoothService.getInstance();
+# Extract and organize
+unzip commandlinetools-linux-11076708_latest.zip -d cmdline-tools
+mv cmdline-tools/cmdline-tools cmdline-tools/latest
 
-// Connect to device
-await bluetoothService.connect(deviceAddress);
-
-// Send motor command
-bluetoothService.sendMotorCommand(leftSpeed, rightSpeed, gear);
-
-// Send stop command
-bluetoothService.sendStopCommand();
-
-// Change gear
-bluetoothService.changeGear("D");
-
-// Toggle claw
-bluetoothService.toggleClaw(true);
+# Clean up
+rm commandlinetools-linux-11076708_latest.zip
 ```
 
-### HapticService (Static)
+### 3. Install Android SDK Platform and Build Tools
 
-Provides haptic feedback:
+```zsh
+# Navigate to SDK manager
+cd ~/Android/Sdk/cmdline-tools/latest/bin
 
-```typescript
-await HapticService.lightTap(); // Light feedback
-await HapticService.mediumTap(); // Medium feedback
-await HapticService.success(); // Success notification
+# Accept licenses
+yes | ./sdkmanager --licenses
+
+# Install required SDK components
+./sdkmanager "platform-tools"
+./sdkmanager "platforms;android-34"
+./sdkmanager "build-tools;34.0.0"
+./sdkmanager "cmdline-tools;latest"
+
+# Optional: Install emulator
+./sdkmanager "emulator"
+./sdkmanager "system-images;android-34;google_apis;x86_64"
 ```
 
-### JoystickMath (Utility)
+### 4. Set Android Environment Variables
 
-Mathematical operations for joystick:
+```zsh
+# Add to ~/.zshrc
+echo 'export ANDROID_HOME=$HOME/Android/Sdk' >> ~/.zshrc
+echo 'export PATH=$PATH:$ANDROID_HOME/emulator' >> ~/.zshrc
+echo 'export PATH=$PATH:$ANDROID_HOME/platform-tools' >> ~/.zshrc
+echo 'export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin' >> ~/.zshrc
 
-```typescript
-// Normalize raw pixel input
-const data = JoystickMath.normalize(dx, dy, maxDistance, deadzone);
+# Reload configuration
+source ~/.zshrc
 
-// Calculate motor speeds
-const { left, right } = JoystickMath.calculateMotorSpeeds(data);
-
-// Apply exponential smoothing
-const smoothed = JoystickMath.exponentialSmoothing(value, sensitivity);
+# Verify
+echo $ANDROID_HOME
+adb --version
 ```
 
-## Context Providers
+### 5. Install Node.js and npm
 
-### BluetoothContext
+```zsh
+# Install Node.js (version 18 or higher)
+sudo dnf install nodejs npm
 
-Manages Bluetooth connection state:
-
-```typescript
-const { state, isConnected, connect, disconnect, connectedDevice } =
-  useBluetooth();
+# Verify installation
+node --version
+npm --version
 ```
 
-### VehicleControlContext
+### 6. Setup Android Device
 
-Manages vehicle control state:
+#### For Physical Device:
 
-```typescript
-const {
-  joystickData,
-  currentGear,
-  clawOpen,
-  speedMultiplier,
-  setGear,
-  toggleClaw,
-  setSpeedMultiplier,
-} = useVehicleControl();
-```
+1. **Enable Developer Options**:
 
-## Installation
+   - Go to Settings → About Phone
+   - Tap "Build Number" 7 times
 
-```bash
+2. **Enable USB Debugging**:
+
+   - Settings → Developer Options → USB Debugging (ON)
+
+3. **Connect device via USB**:
+   ```zsh
+   # Check if device is detected
+   adb devices
+   ```
+
+## App Installation
+
+```zsh
+# Navigate to project directory
+cd /path/to/BeetleBotJoystick
+
+# Install npm packages
 npm install
 ```
 
-## Development
+## Building and Running the App
 
-```bash
-npm start
-```
+### Development Build
 
-For Android:
-
-```bash
+```zsh
+# Build and run on connected device or emulator
 npm run android
 ```
 
-For iOS:
+This command will:
 
-```bash
-npm run ios
+1. Compile the Android APK
+2. Automatically install on device/emulator
+3. Launch the app
+
+### Troubleshooting
+
+#### "JAVA_HOME not set" error:
+
+```zsh
+# Verify JAVA_HOME
+echo $JAVA_HOME
+
+# If empty, set it again
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+source ~/.zshrc
 ```
 
-## ESP32 Communication Protocol
+#### "SDK location not found" error:
 
-The app sends motor commands to ESP32 over Bluetooth in the following format:
-
-```
-{
-  type: string,           // 'joystick', 'stop', 'brake', 'gear', 'claw'
-  leftSpeed: number,      // -100 to 100
-  rightSpeed: number,     // -100 to 100
-  gear: string,           // 'D', 'N', 'R'
-  clawOpen: boolean,
-  timestamp: number
-}
+```zsh
+# Create local.properties file
+echo "sdk.dir=$HOME/Android/Sdk" > android/local.properties
 ```
 
-Commands are sent at 20Hz (50ms interval) via a command queue system.
+#### ADB permission issues:
 
-## Improvements Over Original
+```zsh
+# Add user to plugdev group
+sudo usermod -aG plugdev $USER
 
-1. **Better Code Organization**: Clear separation of concerns with contexts, services, and utilities
-2. **Type Safety**: Full TypeScript implementation
-3. **Performance**: Uses native animation thread with Reanimated
-4. **Maintainability**: Well-documented, modular components
-5. **Scalability**: Easy to add new features or modify existing ones
-6. **Error Handling**: Proper error handling in Bluetooth service
-7. **Responsive UI**: Proper use of Flexbox for landscape layout
-8. **Real-time Feedback**: Haptic and visual feedback for all interactions
+# Install Android tools
+sudo dnf install android-tools
 
-## Future Enhancements
+# Logout and login again for group changes to take effect
+```
 
-- [ ] Add battery level indicator
-- [ ] Implement vehicle telemetry display (speed, temperature)
-- [ ] Add recording/playback of control sequences
-- [ ] Multi-device support (multiple vehicles)
-- [ ] Custom control profiles
-- [ ] In-app calibration
-- [ ] Emergency stop button
-- [ ] Autonomous mode integration
-- [ ] Map/location tracking
-- [ ] Real-time video stream support
+#### Gradle issues:
 
-## License
+```zsh
+# Clear Gradle cache
+cd android
+./gradlew clean
 
-MIT
+# Rebuild
+cd ..
+npm run android
+```
+
+#### Device not detected:
+
+```zsh
+# Check USB connection
+adb devices
+
+# Restart adb server
+adb kill-server
+adb start-server
+adb devices
+```
+
+#### Build fails with "Unable to detect java version":
+
+```zsh
+# Make sure Java 21 is the active version
+sudo alternatives --config java
+
+# Select Java 21 from the list
+```
+
+## Additional Notes
+
+- **Location Services** must be enabled on your phone for Bluetooth scanning to work
+- App is designed for landscape orientation
+- Requires Android 7.0 (API 24) or higher
