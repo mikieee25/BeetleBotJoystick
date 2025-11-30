@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { PermissionsAndroid, Platform } from "react-native";
+import { PermissionsAndroid, Platform, Alert, Linking } from "react-native";
 import { BleManager, Device, Characteristic } from "react-native-ble-plx";
 import * as Location from "expo-location";
 import base64 from "base-64";
@@ -35,10 +35,31 @@ export const useBle = (): UseBleReturn => {
 
   // Initialize BLE manager on mount
   useEffect(() => {
-    bleManagerRef.current = new BleManager();
+    const initBle = async () => {
+      console.log("Initializing BLE Manager...");
+      bleManagerRef.current = new BleManager({
+        restoreStateIdentifier: "beetlebot-ble-manager",
+        restoreStateFunction: (restoredState) => {
+          console.log("BLE state restored:", restoredState);
+        },
+      });
+
+      // Check BLE state and wait for it to be powered on
+      const subscription = bleManagerRef.current.onStateChange((state) => {
+        console.log("BLE State changed to:", state);
+        if (state === "PoweredOn") {
+          subscription.remove();
+        } else if (state === "PoweredOff") {
+          console.log("Bluetooth is powered off");
+        }
+      }, true);
+    };
+
+    initBle();
 
     return () => {
       if (bleManagerRef.current) {
+        console.log("Destroying BLE Manager...");
         bleManagerRef.current.destroy();
       }
     };
@@ -48,20 +69,33 @@ export const useBle = (): UseBleReturn => {
   const requestPermissions = async (): Promise<boolean> => {
     if (Platform.OS === "android") {
       if (Platform.Version >= 31) {
+        // Android 12+ requires BLUETOOTH_SCAN and BLUETOOTH_CONNECT
         const permissions = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         ]);
 
-        return (
+        const scanGranted =
           permissions["android.permission.BLUETOOTH_SCAN"] ===
-            PermissionsAndroid.RESULTS.GRANTED &&
+          PermissionsAndroid.RESULTS.GRANTED;
+        const connectGranted =
           permissions["android.permission.BLUETOOTH_CONNECT"] ===
-            PermissionsAndroid.RESULTS.GRANTED &&
+          PermissionsAndroid.RESULTS.GRANTED;
+        const locationGranted =
           permissions["android.permission.ACCESS_FINE_LOCATION"] ===
-            PermissionsAndroid.RESULTS.GRANTED
+          PermissionsAndroid.RESULTS.GRANTED;
+
+        console.log(
+          "Permissions - Scan:",
+          scanGranted,
+          "Connect:",
+          connectGranted,
+          "Location:",
+          locationGranted
         );
+
+        return scanGranted && connectGranted && locationGranted;
       } else {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
@@ -78,10 +112,53 @@ export const useBle = (): UseBleReturn => {
     return true;
   };
 
+  // Check if location services are enabled (required for BLE scanning on Android)
+  const checkLocationEnabled = async (): Promise<boolean> => {
+    if (Platform.OS === "android") {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status === "granted") {
+        const locationEnabled = await Location.hasServicesEnabledAsync();
+        if (!locationEnabled) {
+          Alert.alert(
+            "Location Required",
+            "BLE scanning requires Location services to be enabled. Please enable Location in your device settings.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Open Settings", onPress: () => Linking.openSettings() },
+            ]
+          );
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
   // Start BLE device scan and show modal with results
   const scanForDevices = async () => {
     const hasPermissions = await requestPermissions();
     if (!hasPermissions) {
+      console.error("Permissions not granted");
+      return;
+    }
+
+    // Check if location services are enabled
+    const locationEnabled = await checkLocationEnabled();
+    if (!locationEnabled) {
+      console.error("Location services not enabled");
+      return;
+    }
+
+    // Stop any existing scan
+    if (bleManagerRef.current) {
+      bleManagerRef.current.stopDeviceScan();
+    }
+
+    // Check if BLE is available and powered on
+    const state = await bleManagerRef.current?.state();
+    console.log("BLE State before scan:", state);
+    if (state !== "PoweredOn") {
+      console.error("Bluetooth is not enabled. Current state:", state);
       return;
     }
 
@@ -89,9 +166,18 @@ export const useBle = (): UseBleReturn => {
     setIsScanning(true);
     setShowDeviceModal(true);
 
+    console.log("Starting BLE device scan with aggressive parameters...");
+    console.log("Platform:", Platform.OS, "Version:", Platform.Version);
+
+    // Try to scan for devices with multiple strategies
     bleManagerRef.current?.startDeviceScan(
-      null,
-      null,
+      null, // Service UUIDs filter (null = all devices)
+      {
+        allowDuplicates: true, // Allow seeing same device multiple times
+        scanMode: 2, // SCAN_MODE_LOW_LATENCY (most aggressive)
+        callbackType: 1, // CALLBACK_TYPE_ALL_MATCHES
+        legacyScan: true, // Use legacy scan mode for better compatibility
+      },
       (error, scannedDevice) => {
         if (error) {
           console.error("Scan error:", error);
@@ -99,8 +185,16 @@ export const useBle = (): UseBleReturn => {
           return;
         }
 
-        // Collect all devices with names
+        // Collect only devices with names
         if (scannedDevice && scannedDevice.name) {
+          console.log(
+            "Device found:",
+            scannedDevice.name,
+            scannedDevice.id,
+            "RSSI:",
+            scannedDevice.rssi
+          );
+
           setDevicesMap((prevMap) => {
             const newMap = new Map(prevMap);
             newMap.set(scannedDevice.id, scannedDevice);
@@ -110,14 +204,16 @@ export const useBle = (): UseBleReturn => {
       }
     );
 
-    // Auto-stop scan after 10 seconds
+    // Auto-stop scan after 30 seconds
     setTimeout(() => {
+      console.log("Scan timeout - stopping scan");
       stopScan();
-    }, 10000);
+    }, 30000);
   };
 
   // Stop active BLE scan
   const stopScan = () => {
+    console.log("Stopping BLE scan. Devices found:", devicesMap.size);
     bleManagerRef.current?.stopDeviceScan();
     setIsScanning(false);
   };

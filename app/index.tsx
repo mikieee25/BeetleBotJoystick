@@ -75,7 +75,6 @@ export default function ControlScreen() {
       const direction = JoystickMath.detectCardinalDirection(data, 45);
 
       let directionCommand = "S";
-      
 
       // Convert cardinal direction to ESP32 command
       switch (direction) {
@@ -114,19 +113,24 @@ export default function ControlScreen() {
         }
 
         // Send speed increments based on gear and direction (forward vs turning)
+        // Turning uses less speed for smoother control and less motor noise
         const isTurning = directionCommand === "L" || directionCommand === "R";
 
         if (currentGear === "2") {
           if (isTurning) {
+            // Gear 2 turning: 1 increment (lower speed, quieter)
             sendCommandFn("+").catch(console.error);
           } else {
+            // Gear 2 forward/backward: 2 increments (full speed)
             sendCommandFn("+").catch(console.error);
             sendCommandFn("+").catch(console.error);
           }
         } else if (currentGear === "1") {
           if (isTurning) {
-            sendCommandFn("+").catch(console.error);
+            // Gear 1 turning: no extra increments (very slow, quiet turns)
+            // Uses base speed only
           } else {
+            // Gear 1 forward/backward: 2 increments
             sendCommandFn("+").catch(console.error);
             sendCommandFn("+").catch(console.error);
           }
