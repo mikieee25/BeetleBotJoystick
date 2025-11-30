@@ -6,6 +6,7 @@
     "orientation": "landscape",
     "userInterfaceStyle": "light",
     "scheme": "beetlebot",
+    "icon": "./assets/icon.png",
     "platforms": [
       "ios",
       "android",
@@ -13,6 +14,11 @@
     ],
     "android": {
       "package": "com.beetlebot.improved",
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
       "permissions": [
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
