@@ -7,11 +7,12 @@
     "userInterfaceStyle": "light",
     "scheme": "beetlebot",
     "icon": "./assets/icon.png",
-    "platforms": [
-      "ios",
-      "android",
-      "web"
-    ],
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "platforms": ["ios", "android", "web"],
     "android": {
       "package": "com.beetlebot.improved",
       "icon": "./assets/icon.png",
@@ -60,3 +61,4 @@
     }
   }
 }
+
