@@ -46,6 +46,12 @@
     },
     "plugins": [
       [
+        "expo-sensors",
+        {
+          "motionPermission": "Allow BeetleBot to access device motion for gyro steering control."
+        }
+      ],
+      [
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": false,
