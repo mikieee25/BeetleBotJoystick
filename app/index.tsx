@@ -1,11 +1,13 @@
-import React, { useCallback, useState, useRef } from "react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
 import { StyleSheet, View, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Joystick } from "@components/Joystick";
 import { GearSelector } from "@components/GearSelector";
 import { ClawControl } from "@components/ClawControl";
+import { ControlModeToggle } from "@components/ControlModeToggle";
 import { BluetoothConnectorV2 } from "@components/BluetoothConnectorV2";
 import { useVehicleControl } from "@contexts/vehicleControlContext";
+import { useGyroControl } from "@hooks/useGyroControl";
 import { JoystickMath, type CardinalDirection } from "@utils/joystickMath";
 import type { JoystickData, GearType } from "../src/types";
 
@@ -18,6 +20,8 @@ export default function ControlScreen() {
     setGear,
     clawOpen,
     toggleClaw,
+    controlMode,
+    setControlMode,
   } = useVehicleControl();
 
   const [motorSpeeds, setMotorSpeeds] = useState({ left: 0, right: 0 });
@@ -27,6 +31,15 @@ export default function ControlScreen() {
   const [sendCommandFn, setSendCommandFn] = useState<
     ((cmd: string) => Promise<void>) | null
   >(null);
+
+  const isGyro = controlMode === "gyro";
+
+  // Gyro hook — active only when gyro mode is selected and connected
+  const gyroState = useGyroControl({
+    enabled: isGyro && !!connectedDeviceId,
+    updateInterval: 150,
+    tiltThreshold: 2.5,
+  });
 
   // Initialize connection and send startup commands to ESP32
   const handleConnected = useCallback(
@@ -60,23 +73,13 @@ export default function ControlScreen() {
   const speedSentRef = useRef<boolean>(false);
   const maxSpeedSetRef = useRef<boolean>(false);
 
-  // Process joystick input: detect direction and send motor commands (4-way cardinal only)
-  const handleJoystickMove = useCallback(
-    (data: JoystickData) => {
-      setJoystickData(data);
-
-      // Calculate motor speeds for visual feedback
-      const speeds = JoystickMath.calculateMotorSpeeds(data, "arcade", 100);
-      setMotorSpeeds(speeds);
-
+  // Send direction and speed commands based on cardinal direction
+  const sendDirectionCommand = useCallback(
+    (direction: CardinalDirection) => {
       if (!sendCommandFn || !connectedDeviceId) return;
-
-      // Map joystick position to 4 cardinal directions (N/S/E/W)
-      const direction = JoystickMath.detectCardinalDirection(data, 45);
 
       let directionCommand = "S";
 
-      // Convert cardinal direction to ESP32 command
       switch (direction) {
         case "NORTH":
           directionCommand = "F";
@@ -103,34 +106,25 @@ export default function ControlScreen() {
         maxSpeedSetRef.current = false;
       }
 
-      // Send speed increments immediately (no delays to avoid ESP32 timeout)
+      // Send speed increments (no delays to avoid ESP32 timeout)
       if (directionCommand !== "S" && !speedSentRef.current) {
-        // Set max speed once per direction change
         if (!maxSpeedSetRef.current) {
           const maxSpeed = currentGear === "2" ? 180 : 60;
           sendCommandFn(`MAX:${maxSpeed}`).catch(console.error);
           maxSpeedSetRef.current = true;
         }
 
-        // Send speed increments based on gear and direction (forward vs turning)
-        // Turning uses less speed for smoother control and less motor noise
         const isTurning = directionCommand === "L" || directionCommand === "R";
 
         if (currentGear === "2") {
           if (isTurning) {
-            // Gear 2 turning: 1 increment (lower speed, quieter)
             sendCommandFn("+").catch(console.error);
           } else {
-            // Gear 2 forward/backward: 2 increments (full speed)
             sendCommandFn("+").catch(console.error);
             sendCommandFn("+").catch(console.error);
           }
         } else if (currentGear === "1") {
-          if (isTurning) {
-            // Gear 1 turning: no extra increments (very slow, quiet turns)
-            // Uses base speed only
-          } else {
-            // Gear 1 forward/backward: 2 increments
+          if (!isTurning) {
             sendCommandFn("+").catch(console.error);
             sendCommandFn("+").catch(console.error);
           }
@@ -138,7 +132,22 @@ export default function ControlScreen() {
         speedSentRef.current = true;
       }
     },
-    [setJoystickData, sendCommandFn, connectedDeviceId, currentGear]
+    [sendCommandFn, connectedDeviceId, currentGear]
+  );
+
+  // Process joystick input: detect direction and send motor commands (4-way cardinal only)
+  const handleJoystickMove = useCallback(
+    (data: JoystickData) => {
+      setJoystickData(data);
+
+      // Calculate motor speeds for visual feedback
+      const speeds = JoystickMath.calculateMotorSpeeds(data, "arcade", 100);
+      setMotorSpeeds(speeds);
+
+      const direction = JoystickMath.detectCardinalDirection(data, 45);
+      sendDirectionCommand(direction);
+    },
+    [setJoystickData, sendDirectionCommand]
   );
 
   // Stop joystick and reset motor speeds
@@ -154,16 +163,42 @@ export default function ControlScreen() {
     }
   }, [setJoystickData, sendCommandFn, connectedDeviceId]);
 
+  // Process gyro input: send commands based on device tilt
+  useEffect(() => {
+    if (!isGyro || !gyroState) return;
+
+    setMotorSpeeds({
+      left: Math.round(gyroState.tiltY * 100),
+      right: Math.round(gyroState.tiltY * 100),
+    });
+
+    sendDirectionCommand(gyroState.direction);
+  }, [isGyro, gyroState, sendDirectionCommand]);
+
+  // Stop motors when switching modes
+  const handleModeChange = useCallback(
+    (mode: "joystick" | "gyro") => {
+      // Send stop before switching
+      if (sendCommandFn && connectedDeviceId) {
+        sendCommandFn("S").catch(console.error);
+      }
+      lastCommandRef.current = null;
+      speedSentRef.current = false;
+      maxSpeedSetRef.current = false;
+      setMotorSpeeds({ left: 0, right: 0 });
+      setControlMode(mode);
+    },
+    [sendCommandFn, connectedDeviceId, setControlMode]
+  );
+
   // Switch gear and stop motor to prevent momentum conflicts
   const handleGearChange = useCallback(
     (gear: GearType) => {
       setGear(gear);
-      // Reset speed tracking for clean gear transition
       speedSentRef.current = false;
       maxSpeedSetRef.current = false;
       lastCommandRef.current = null;
 
-      // Stop motor before changing gears
       if (sendCommandFn && connectedDeviceId) {
         sendCommandFn("S").catch(console.error);
       }
@@ -195,7 +230,7 @@ export default function ControlScreen() {
         },
       ]}
     >
-      {/* Header: App title and Bluetooth connection button */}
+      {/* Header: App title, mode toggle, and Bluetooth connection button */}
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>
@@ -204,24 +239,39 @@ export default function ControlScreen() {
           </Text>
         </View>
 
-        <BluetoothConnectorV2
-          onConnected={handleConnected}
-          onDisconnected={handleDisconnected}
-        />
+        <View style={styles.headerRight}>
+          <ControlModeToggle mode={controlMode} onModeChange={handleModeChange} />
+          <BluetoothConnectorV2
+            onConnected={handleConnected}
+            onDisconnected={handleDisconnected}
+          />
+        </View>
       </View>
 
-      {/* Layout: Joystick on left, Gear/Claw controls on right */}
+      {/* Layout: Control area on left, Gear/Claw controls on right */}
       <View style={styles.mainContent}>
-        {/* Left: Joystick controller */}
+        {/* Left: Joystick or Gyro indicator */}
         <View style={styles.leftSection}>
-          <View style={styles.joystickWrapper}>
-            <Joystick
-              size={180}
-              onMove={handleJoystickMove}
-              onStop={handleJoystickStop}
-              deadzone={0.1}
-            />
-          </View>
+          {isGyro ? (
+            <View style={styles.gyroIndicator}>
+              <Text style={styles.gyroTitle}>GYRO MODE</Text>
+              <Text style={styles.gyroDirection}>
+                {gyroState?.direction ?? "CENTER"}
+              </Text>
+              <Text style={styles.gyroHint}>
+                Tilt device to steer
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.joystickWrapper}>
+              <Joystick
+                size={180}
+                onMove={handleJoystickMove}
+                onStop={handleJoystickStop}
+                deadzone={0.1}
+              />
+            </View>
+          )}
         </View>
 
         {/* Right: Gear selector and claw toggle */}
@@ -242,7 +292,8 @@ export default function ControlScreen() {
         <View style={styles.statusBar}>
           <Text style={styles.statusText}>✓ Connected</Text>
           <Text style={styles.statusText}>
-            Gear: {currentGear} | Claw: {clawOpen ? "OPEN" : "CLOSED"}
+            {isGyro ? "GYRO" : "JOYSTICK"} | Gear: {currentGear} | Claw:{" "}
+            {clawOpen ? "OPEN" : "CLOSED"}
           </Text>
         </View>
       )}
@@ -265,6 +316,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
   },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   title: {
     fontSize: 24,
     fontWeight: "700",
@@ -279,14 +335,14 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     padding: 16,
-    paddingLeft: 32, // Add left padding
-    paddingRight: 32, // Balance right padding
-    justifyContent: "space-between", // Space between joystick and controls
+    paddingLeft: 32,
+    paddingRight: 32,
+    justifyContent: "space-between",
   },
   leftSection: {
-    flex: 0, // Don't flex, use fixed size
+    flex: 0,
     justifyContent: "center",
-    alignItems: "flex-start", // Align left
+    alignItems: "flex-start",
     gap: 12,
   },
   joystickWrapper: {
@@ -296,16 +352,43 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "transparent",
   },
-  rightSection: {
-    flex: 0, // Don't flex, use fixed size
+  gyroIndicator: {
+    width: 220,
+    height: 220,
     justifyContent: "center",
-    alignItems: "flex-end", // Align right
+    alignItems: "center",
+    backgroundColor: "#f5f5f5",
+    borderRadius: 110,
+    borderWidth: 2,
+    borderColor: "#FF9E42",
+  },
+  gyroTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FF9E42",
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  gyroDirection: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#333",
+  },
+  gyroHint: {
+    fontSize: 11,
+    color: "#999",
+    marginTop: 8,
+  },
+  rightSection: {
+    flex: 0,
+    justifyContent: "center",
+    alignItems: "flex-end",
     paddingVertical: 16,
   },
   controlRow: {
     flexDirection: "row",
     gap: 16,
-    justifyContent: "flex-end", // Align right
+    justifyContent: "flex-end",
     alignItems: "center",
   },
   gearWrapper: {

@@ -63,6 +63,11 @@ export interface VehicleTelemetry {
 }
 
 /**
+ * Control mode - joystick (touch) or gyro (device tilt)
+ */
+export type ControlMode = "joystick" | "gyro";
+
+/**
  * Control configuration
  */
 export interface ControlConfig {
