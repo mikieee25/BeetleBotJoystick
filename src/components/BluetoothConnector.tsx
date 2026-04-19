@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   View,
@@ -36,14 +36,7 @@ export function BluetoothConnector({
     []
   );
 
-  // Start scanning when modal opens
-  useEffect(() => {
-    if (showDevices && !scanning) {
-      requestPermissionsAndScan();
-    }
-  }, [showDevices]);
-
-  const requestPermissionsAndScan = async () => {
+  const requestPermissionsAndScan = useCallback(async () => {
     if (Platform.OS === "android") {
       try {
         const granted = await PermissionsAndroid.requestMultiple([
@@ -71,7 +64,14 @@ export function BluetoothConnector({
     }
 
     startScan();
-  };
+  }, []);
+
+  // Start scanning when modal opens
+  useEffect(() => {
+    if (showDevices && !scanning) {
+      void requestPermissionsAndScan();
+    }
+  }, [showDevices, scanning, requestPermissionsAndScan]);
 
   const startScan = async () => {
     setScanning(true);

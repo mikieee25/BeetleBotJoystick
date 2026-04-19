@@ -42,8 +42,8 @@ export function BluetoothConnectorV2({
   // Handle device selection from modal
   const handleDeviceSelect = async (selectedDevice: Device) => {
     await HapticService.mediumTap();
-    await connectToDevice(selectedDevice);
-    if (onConnected) {
+    const connected = await connectToDevice(selectedDevice);
+    if (connected && onConnected) {
       onConnected(selectedDevice.id, sendCommand);
     }
   };

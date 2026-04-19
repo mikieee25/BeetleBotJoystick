@@ -6,13 +6,12 @@ import { GearSelector } from "@components/GearSelector";
 import { ClawControl } from "@components/ClawControl";
 import { BluetoothConnectorV2 } from "@components/BluetoothConnectorV2";
 import { useVehicleControl } from "@contexts/vehicleControlContext";
-import { JoystickMath, type CardinalDirection } from "@utils/joystickMath";
+import { JoystickMath } from "@utils/joystickMath";
 import type { JoystickData, GearType } from "../src/types";
 
 export default function ControlScreen() {
   const insets = useSafeAreaInsets();
   const {
-    joystickData,
     setJoystickData,
     currentGear,
     setGear,
@@ -20,7 +19,6 @@ export default function ControlScreen() {
     toggleClaw,
   } = useVehicleControl();
 
-  const [motorSpeeds, setMotorSpeeds] = useState({ left: 0, right: 0 });
   const [connectedDeviceId, setConnectedDeviceId] = useState<string | null>(
     null
   );
@@ -64,10 +62,6 @@ export default function ControlScreen() {
   const handleJoystickMove = useCallback(
     (data: JoystickData) => {
       setJoystickData(data);
-
-      // Calculate motor speeds for visual feedback
-      const speeds = JoystickMath.calculateMotorSpeeds(data, "arcade", 100);
-      setMotorSpeeds(speeds);
 
       if (!sendCommandFn || !connectedDeviceId) return;
 
@@ -144,7 +138,6 @@ export default function ControlScreen() {
   // Stop joystick and reset motor speeds
   const handleJoystickStop = useCallback(() => {
     setJoystickData(null);
-    setMotorSpeeds({ left: 0, right: 0 });
 
     lastCommandRef.current = null;
     speedSentRef.current = false;

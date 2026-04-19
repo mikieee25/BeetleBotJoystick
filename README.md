@@ -1,4 +1,20 @@
-# BeetleBot Joystick - Android Build Guide
+# BeetleBot Joystick
+
+Local build notes for the BeetleBot Joystick app.
+
+## Platform Guides
+
+- Android guide: see the setup and build steps below.
+- iOS local export guide: see [docs/IOS_EXPORT_CHECKLIST.md](docs/IOS_EXPORT_CHECKLIST.md).
+
+## Current App Notes
+
+- Expo prebuild/native project is already present in `ios/` and `android/`.
+- iOS bundle identifier is `com.beetlebot.improved`.
+- App version is `2.0.0`.
+- Bluetooth permissions are already declared for iOS in `Info.plist`.
+
+## Android Build Guide
 
 Build guide for the BeetleBot Joystick Android app on Fedora Gnome with zsh shell.
 

@@ -7,6 +7,8 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "ios:device": "expo run:ios --device",
+    "ios:pods": "npx pod-install ios",
     "web": "expo start --web",
     "lint": "expo lint"
   },

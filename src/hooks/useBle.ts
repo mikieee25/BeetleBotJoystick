@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { PermissionsAndroid, Platform, Alert, Linking } from "react-native";
-import { BleManager, Device, Characteristic } from "react-native-ble-plx";
+import { BleManager, Device } from "react-native-ble-plx";
 import * as Location from "expo-location";
 import base64 from "base-64";
 
@@ -17,7 +17,7 @@ interface UseBleReturn {
   setShowDeviceModal: (show: boolean) => void;
   scanForDevices: () => Promise<void>;
   stopScan: () => void;
-  connectToDevice: (device: Device) => Promise<void>;
+  connectToDevice: (device: Device) => Promise<boolean>;
   disconnectDevice: () => Promise<void>;
   sendCommand: (command: string) => Promise<void>;
 }
@@ -219,7 +219,9 @@ export const useBle = (): UseBleReturn => {
   };
 
   // Connect to BLE device and discover services/characteristics
-  const connectToDevice = async (deviceToConnect: Device) => {
+  const connectToDevice = async (
+    deviceToConnect: Device
+  ): Promise<boolean> => {
     try {
       stopScan();
 
@@ -237,11 +239,13 @@ export const useBle = (): UseBleReturn => {
       setDevice(connectedDevice);
       setConnectedDeviceId(connectedDevice.id);
       setShowDeviceModal(false);
+      return true;
     } catch (error) {
       console.error("Connection error:", error);
       deviceRef.current = null;
       setDevice(null);
       setConnectedDeviceId(null);
+      return false;
     }
   };
 
@@ -281,7 +285,7 @@ export const useBle = (): UseBleReturn => {
           CHARACTERISTIC_UUID,
           encodedCommand
         );
-      } catch (withResponseError) {
+      } catch {
         // Fallback to write without response if with-response fails
         await currentDevice.writeCharacteristicWithoutResponseForService(
           SERVICE_UUID,
