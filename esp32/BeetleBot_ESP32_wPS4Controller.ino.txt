@@ -1,0 +1,555 @@
+/**
+ * BeetleBot ESP32 Arduino Sketch
+ * 
+ * Receives Bluetooth commands from React Native app and controls:
+ * - Two DC motors (left and right) via motor driver
+ * - One servo motor for claw mechanism
+ * 
+ * Hardware Connections:
+ * - Motor Driver (L298N or similar):
+ *   - Left Motor: ENA (Pin 25), IN1 (Pin 26), IN2 (Pin 27)
+ *   - Right Motor: ENB (Pin 32), IN3 (Pin 33), IN4 (Pin 14)
+ * - Servo Motor: Signal Pin 15
+ * 
+ * BLE Service UUID: 4fafc201-1fb5-459e-8fcc-c5c9c331914b
+ * BLE Characteristic UUID: beb5483e-36e1-4688-b7f5-ea07361b26a8
+ */
+ 
+/**
+ * BeetleBot — PCB Edition + PS4 Controller
+ * + Proportional Trigger Claw (R2) with Smooth Easing
+ * + Joystick Distance-Based Speed Control (Exponential Curve)
+ * + Brake System (L2) — gradual deceleration to full stop
+ *
+ * Controls:
+ *   D-Pad Left  → Tank Mode   [Blue LED]
+ *   D-Pad Right → Classic Mode [Green LED]
+ *   L1          → Speed decrease
+ *   R1          → Speed increase
+ *   L2          → Brake (gradual → full stop when fully pressed)
+ *   R2          → Proportional claw close (smooth, analog depth)
+ *
+ * Hardware: Same as before
+ */
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <ESP32Servo.h>
+#include <PS4Controller.h>
+
+// ─── BLE UUIDs ────────────────────────────────────────────────────────────────
+#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
+
+// ─── Pin Assignments ──────────────────────────────────────────────────────────
+const int STBY      = 17;
+const int PWMA      = 25;
+const int PWMB      = 26;
+const int AIN1      = 27;
+const int AIN2      = 14;
+const int BIN1      = 16;
+const int BIN2      = 13;
+const int LED       = 2;
+const int SERVO_PIN = 15;
+
+// ─── PWM ──────────────────────────────────────────────────────────────────────
+#define PWM_FREQ       5000
+#define PWM_RESOLUTION 8
+
+// ─── Speed Settings ───────────────────────────────────────────────────────────
+#define SPEED_STEP        20
+#define SPEED_DEFAULT     150
+#define SPEED_MIN         60
+#define SPEED_MAX         255
+#define STICK_DEADZONE    20
+
+// ─── Speed Curve Settings ─────────────────────────────────────────────────────
+#define SPEED_EXPONENT    2.0
+#define SPEED_CURVE_TYPE  1
+
+// ─── Brake Settings ───────────────────────────────────────────────────────────
+#define BRAKE_DEADZONE    10
+#define BRAKE_MAX         255
+#define BRAKE_RAMP_RATE   15        // Speed reduction per loop when braking
+#define BRAKE_FULL_STOP   200       // L2 value above this = instant stop
+
+// ─── Servo Positions ──────────────────────────────────────────────────────────
+#define CLAW_OPEN_ANGLE   90
+#define CLAW_CLOSED_ANGLE 3
+
+// ─── Trigger Settings ─────────────────────────────────────────────────────────
+#define TRIGGER_DEADZONE  10
+#define TRIGGER_MAX       255
+
+// ─── Servo Smoothing ──────────────────────────────────────────────────────────
+#define SERVO_EASE_FACTOR 0.3
+float currentServoAngle = CLAW_OPEN_ANGLE;
+
+// ─── Motor Smoothing (Speed Ramping) ──────────────────────────────────────────
+#define MOTOR_RAMP_UP     25        // Max speed increase per loop
+#define MOTOR_RAMP_DOWN   35        // Max speed decrease per loop (coast)
+float currentMotorA = 0.0f;
+float currentMotorB = 0.0f;
+
+// ─── Global State ─────────────────────────────────────────────────────────────
+BLEServer         *pServer         = NULL;
+BLECharacteristic *pCharacteristic = NULL;
+Servo              myServo;
+
+bool deviceConnected    = false;
+bool oldDeviceConnected = false;
+
+int  currentMaxSpeed  = SPEED_DEFAULT;
+int  currentSpeed     = 0;
+char currentDirection = 'S';
+
+unsigned long lastCommandTime = 0;
+const unsigned long TIMEOUT_MS = 600;
+
+// PS4 state
+bool ps4Connected  = false;
+int  ps4Speed      = SPEED_DEFAULT;
+bool tankMode      = true;
+bool lastDpadLeft  = false;
+bool lastDpadRight = false;
+
+// ─── Forward Declarations ─────────────────────────────────────────────────────
+void processCommand(String cmd);
+void applyCurrentDirection();
+void driveForward();
+void driveBackward();
+void turnLeft();
+void turnRight();
+void stopMotors();
+void move(int sA, int sB, bool a1, bool a2, bool b1, bool b2);
+void smoothServoTo(int targetAngle);
+void handlePS4Input();
+float applySpeedCurve(float normalizedInput);
+float getStickMagnitude(int x, int y);
+float getAxisMagnitude(int value);
+void applyMotorRamp(int targetA, int targetB, bool aFwd, bool bFwd);
+
+// ─── BLE Callbacks ────────────────────────────────────────────────────────────
+
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    deviceConnected = true;
+    digitalWrite(LED, HIGH);
+    Serial.println("BLE: device connected");
+  }
+  void onDisconnect(BLEServer *pServer) {
+    deviceConnected = false;
+    digitalWrite(LED, LOW);
+    Serial.println("BLE: device disconnected");
+    stopMotors();
+  }
+};
+
+class MyCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      value.trim();
+      Serial.println("BLE Received: " + value);
+      lastCommandTime = millis();
+      processCommand(value);
+    }
+  }
+};
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("BeetleBot PCB + PS4 starting...");
+  Serial.println("Features: Proportional Claw (R2) + Brake (L2) + Speed Curve + Motor Ramp");
+
+  pinMode(STBY, OUTPUT); digitalWrite(STBY, HIGH);
+  pinMode(AIN1, OUTPUT); pinMode(AIN2, OUTPUT);
+  pinMode(BIN1, OUTPUT); pinMode(BIN2, OUTPUT);
+  pinMode(LED,  OUTPUT); digitalWrite(LED, LOW);
+
+  myServo.setPeriodHertz(50);
+  myServo.attach(SERVO_PIN, 500, 2400);
+
+  ledcAttach(PWMA, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(PWMB, PWM_FREQ, PWM_RESOLUTION);
+
+  Serial.println("Servo test...");
+  myServo.write(0);   delay(800);
+  myServo.write(90);  delay(800);
+  myServo.write(0);   delay(400);
+  myServo.write(CLAW_OPEN_ANGLE);
+  currentServoAngle = CLAW_OPEN_ANGLE;
+  Serial.println("Servo test done. Claw open.");
+
+  stopMotors();
+  currentMotorA = 0.0f;
+  currentMotorB = 0.0f;
+  lastCommandTime = millis();
+
+  PS4.begin("00:70:07:DF:8E:3E");
+  Serial.println("PS4: waiting for controller...");
+
+  BLEDevice::init("BeetleBot-ESP32");
+
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  pCharacteristic = pService->createCharacteristic(
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ     |
+    BLECharacteristic::PROPERTY_WRITE    |
+    BLECharacteristic::PROPERTY_WRITE_NR |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  pService->start();
+
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMaxPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  Serial.println("Ready! BLE advertising + PS4 pairing active.");
+  Serial.println("Default mode: TANK | L2=Brake | R2=Claw");
+}
+
+// ─── Loop ─────────────────────────────────────────────────────────────────────
+
+void loop() {
+
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500);
+    pServer->startAdvertising();
+    Serial.println("BLE: advertising restarted");
+    oldDeviceConnected = deviceConnected;
+  }
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+
+  if (!ps4Connected && deviceConnected && currentDirection != 'S') {
+    if (millis() - lastCommandTime > TIMEOUT_MS) {
+      Serial.println("BLE timeout — stopping motors");
+      currentDirection = 'S';
+      currentSpeed = 0;
+      stopMotors();
+    }
+  }
+
+  if (PS4.isConnected()) {
+    if (!ps4Connected) {
+      ps4Connected = true;
+      ps4Speed     = SPEED_DEFAULT;
+      tankMode     = true;
+      currentServoAngle = CLAW_OPEN_ANGLE;
+      currentMotorA = 0.0f;
+      currentMotorB = 0.0f;
+      Serial.println("PS4 controller connected!");
+      Serial.println("Mode: TANK | Speed: " + String(ps4Speed));
+      PS4.setLed(0, 0, 255);
+    }
+    handlePS4Input();
+  } else {
+    if (ps4Connected) {
+      ps4Connected = false;
+      Serial.println("PS4 controller disconnected — stopping");
+      stopMotors();
+      smoothServoTo(CLAW_OPEN_ANGLE);
+    }
+  }
+
+  delay(10);
+}
+
+// ─── Speed Curve Math ─────────────────────────────────────────────────────────
+
+float applySpeedCurve(float normalizedInput) {
+  if (normalizedInput <= 0.0f) return 0.0f;
+  if (normalizedInput >= 1.0f) return 1.0f;
+  
+  if (SPEED_CURVE_TYPE == 0) return normalizedInput;
+  else if (SPEED_CURVE_TYPE == 1) return pow(normalizedInput, SPEED_EXPONENT);
+  else if (SPEED_CURVE_TYPE == 2) return normalizedInput * normalizedInput * (3.0f - 2.0f * normalizedInput);
+  return normalizedInput;
+}
+
+float getStickMagnitude(int x, int y) {
+  if (abs(x) <= STICK_DEADZONE && abs(y) <= STICK_DEADZONE) return 0.0f;
+  float fx = x / 127.0f;
+  float fy = y / 127.0f;
+  float dist = sqrt(fx * fx + fy * fy);
+  return constrain(dist, 0.0f, 1.0f);
+}
+
+float getAxisMagnitude(int value) {
+  if (abs(value) <= STICK_DEADZONE) return 0.0f;
+  float normalized = (abs(value) - STICK_DEADZONE) / (127.0f - STICK_DEADZONE);
+  return constrain(normalized, 0.0f, 1.0f);
+}
+
+// ─── Motor Ramp with Brake ────────────────────────────────────────────────────
+
+void applyMotorRamp(int targetA, int targetB, bool aFwd, bool bFwd) {
+  
+  // Check brake input (L2)
+  int l2Value = PS4.L2Value();
+  bool braking = (l2Value > BRAKE_DEADZONE);
+  
+  if (braking) {
+    // Calculate brake intensity (0.0 to 1.0)
+    float brakeIntensity = (float)(l2Value - BRAKE_DEADZONE) / (BRAKE_MAX - BRAKE_DEADZONE);
+    brakeIntensity = constrain(brakeIntensity, 0.0f, 1.0f);
+    
+    // Full stop when L2 fully pressed
+    if (l2Value > BRAKE_FULL_STOP) {
+      targetA = 0;
+      targetB = 0;
+    } else {
+      // Gradual brake: reduce target speed based on brake depth
+      int brakeReductionA = (int)(currentMotorA * brakeIntensity * 0.8f);
+      int brakeReductionB = (int)(currentMotorB * brakeIntensity * 0.8f);
+      targetA = max(targetA - brakeReductionA, 0);
+      targetB = max(targetB - brakeReductionB, 0);
+    }
+    
+    // Visual feedback: red LED pulse when braking
+    int brakeLedBrightness = (int)(brakeIntensity * 255);
+    PS4.setLed(brakeLedBrightness, 0, 0);
+  }
+
+  // Ramp up/down to target
+  if (currentMotorA < targetA) {
+    currentMotorA = min(currentMotorA + MOTOR_RAMP_UP, (float)targetA);
+  } else if (currentMotorA > targetA) {
+    currentMotorA = max(currentMotorA - MOTOR_RAMP_DOWN, (float)targetA);
+  }
+  
+  if (currentMotorB < targetB) {
+    currentMotorB = min(currentMotorB + MOTOR_RAMP_UP, (float)targetB);
+  } else if (currentMotorB > targetB) {
+    currentMotorB = max(currentMotorB - MOTOR_RAMP_DOWN, (float)targetB);
+  }
+
+  // Apply to motors
+  ledcWrite(PWMA, (int)currentMotorA);
+  digitalWrite(AIN1, aFwd ? 0 : 1);
+  digitalWrite(AIN2, aFwd ? 1 : 0);
+
+  ledcWrite(PWMB, (int)currentMotorB);
+  digitalWrite(BIN1, bFwd ? 1 : 0);
+  digitalWrite(BIN2, bFwd ? 0 : 1);
+}
+
+// ─── PS4 Input Handler ────────────────────────────────────────────────────────
+
+void handlePS4Input() {
+
+  // ── D-Pad Left = Tank Mode ───────────────────────────────────────────────────
+  bool dpadLeftNow = PS4.Left();
+  if (dpadLeftNow && !lastDpadLeft) {
+    tankMode = true;
+    PS4.setLed(0, 0, 255);
+    Serial.println("Mode: TANK (LStick=LeftTire | RStick=RightTire)");
+  }
+  lastDpadLeft = dpadLeftNow;
+
+  // ── D-Pad Right = Classic Mode ───────────────────────────────────────────────
+  bool dpadRightNow = PS4.Right();
+  if (dpadRightNow && !lastDpadRight) {
+    tankMode = false;
+    PS4.setLed(0, 255, 0);
+    Serial.println("Mode: CLASSIC (LStick=Fwd/Back | RStick=Turn)");
+  }
+  lastDpadRight = dpadRightNow;
+
+  // ── L1 = Speed down ─────────────────────────────────────────────────────────
+  if (PS4.L1()) {
+    ps4Speed = max(ps4Speed - SPEED_STEP, (int)SPEED_MIN);
+    Serial.println("Speed: " + String(ps4Speed));
+    delay(150);
+  }
+
+  // ── R1 = Speed up ───────────────────────────────────────────────────────────
+  if (PS4.R1()) {
+    ps4Speed = min(ps4Speed + SPEED_STEP, (int)SPEED_MAX);
+    Serial.println("Speed: " + String(ps4Speed));
+    delay(150);
+  }
+
+  // ── R2 = Proportional claw with smooth easing ───────────────────────────────
+  int r2Value = PS4.R2Value();
+  
+  if (r2Value > TRIGGER_DEADZONE) {
+    int targetAngle = map(r2Value, 
+                          TRIGGER_DEADZONE, 
+                          TRIGGER_MAX, 
+                          CLAW_OPEN_ANGLE, 
+                          CLAW_CLOSED_ANGLE);
+    targetAngle = constrain(targetAngle, CLAW_CLOSED_ANGLE, CLAW_OPEN_ANGLE);
+    smoothServoTo(targetAngle);
+  } else {
+    smoothServoTo(CLAW_OPEN_ANGLE);
+  }
+
+  // ── Motor values ─────────────────────────────────────────────────────────────
+  int targetASpeed = 0; bool motorAFwd = true;
+  int targetBSpeed = 0; bool motorBFwd = true;
+
+  if (tankMode) {
+    // ── TANK MODE: Each stick controls one tire ───────────────────────────────
+    int leftX  = PS4.LStickX();
+    int leftY  = PS4.LStickY();
+    int rightX = PS4.RStickX();
+    int rightY = PS4.RStickY();
+
+    float leftMag  = getStickMagnitude(leftX, leftY);
+    float rightMag = getStickMagnitude(rightX, rightY);
+
+    if (leftMag > 0.0f) {
+      float curved = applySpeedCurve(leftMag);
+      targetASpeed = (int)(curved * ps4Speed);
+      motorAFwd = (leftY > 0);
+    }
+
+    if (rightMag > 0.0f) {
+      float curved = applySpeedCurve(rightMag);
+      targetBSpeed = (int)(curved * ps4Speed);
+      motorBFwd = (rightY > 0);
+    }
+
+  } else {
+    // ── CLASSIC MODE: LStick=Fwd/Back, RStick=Turn ───────────────────────────
+    int leftY  = PS4.LStickY();
+    int rightX = PS4.RStickX();
+
+    float driveMag = getAxisMagnitude(leftY);
+    float turnMag  = getAxisMagnitude(rightX);
+
+    float driveCurved = applySpeedCurve(driveMag);
+    float turnCurved  = applySpeedCurve(turnMag);
+
+    int driveSpeed = (int)(driveCurved * ps4Speed);
+    int turnSpeed  = (int)(turnCurved * ps4Speed);
+
+    bool movingFwd    = (leftY  >  STICK_DEADZONE);
+    bool movingBack   = (leftY  < -STICK_DEADZONE);
+    bool turningRight = (rightX >  STICK_DEADZONE);
+    bool turningLeft  = (rightX < -STICK_DEADZONE);
+
+    if (turningLeft && !movingFwd && !movingBack) {
+      targetASpeed = turnSpeed; motorAFwd = false;
+      targetBSpeed = turnSpeed; motorBFwd = true;
+
+    } else if (turningRight && !movingFwd && !movingBack) {
+      targetASpeed = turnSpeed; motorAFwd = true;
+      targetBSpeed = turnSpeed; motorBFwd = false;
+
+    } else if (movingFwd && turningLeft) {
+      targetASpeed = driveSpeed / 2; motorAFwd = true;
+      targetBSpeed = driveSpeed;     motorBFwd = true;
+
+    } else if (movingFwd && turningRight) {
+      targetASpeed = driveSpeed;     motorAFwd = true;
+      targetBSpeed = driveSpeed / 2; motorBFwd = true;
+
+    } else if (movingBack && turningLeft) {
+      targetASpeed = driveSpeed / 2; motorAFwd = false;
+      targetBSpeed = driveSpeed;     motorBFwd = false;
+
+    } else if (movingBack && turningRight) {
+      targetASpeed = driveSpeed;     motorAFwd = false;
+      targetBSpeed = driveSpeed / 2; motorBFwd = false;
+
+    } else {
+      targetASpeed = driveSpeed; motorAFwd = (leftY > 0);
+      targetBSpeed = driveSpeed; motorBFwd = (leftY > 0);
+    }
+  }
+
+  // ── Apply with motor ramping + brake ────────────────────────────────────────
+  applyMotorRamp(targetASpeed, targetBSpeed, motorAFwd, motorBFwd);
+}
+
+// ─── Smooth Servo Easing ──────────────────────────────────────────────────────
+
+void smoothServoTo(int targetAngle) {
+  currentServoAngle += (targetAngle - currentServoAngle) * SERVO_EASE_FACTOR;
+  myServo.write((int)currentServoAngle);
+}
+
+// ─── BLE Command Processing ───────────────────────────────────────────────────
+
+void processCommand(String cmd) {
+  cmd.trim();
+
+  if (cmd == "F") {
+    currentDirection = 'F';
+    currentSpeed = SPEED_DEFAULT;
+    driveForward();
+  } else if (cmd == "B") {
+    currentDirection = 'B';
+    currentSpeed = SPEED_DEFAULT;
+    driveBackward();
+  } else if (cmd == "L") {
+    currentDirection = 'L';
+    currentSpeed = SPEED_DEFAULT;
+    turnLeft();
+  } else if (cmd == "R") {
+    currentDirection = 'R';
+    currentSpeed = SPEED_DEFAULT;
+    turnRight();
+  } else if (cmd == "S" || cmd == "/") {
+    currentDirection = 'S';
+    currentSpeed = 0;
+    stopMotors();
+  } else if (cmd == "O") {
+    smoothServoTo(CLAW_OPEN_ANGLE);
+  } else if (cmd == "C") {
+    smoothServoTo(CLAW_CLOSED_ANGLE);
+  } else if (cmd == "+") {
+    currentSpeed = min(currentSpeed + SPEED_STEP, currentMaxSpeed);
+    applyCurrentDirection();
+  } else if (cmd.startsWith("MAX:")) {
+    int appMax = cmd.substring(4).toInt();
+    currentMaxSpeed = (appMax <= 60) ? 200 : 255;
+    Serial.println("BLE max speed: " + String(currentMaxSpeed));
+  } else {
+    Serial.println("Unknown command: " + cmd);
+  }
+}
+
+void applyCurrentDirection() {
+  switch (currentDirection) {
+    case 'F': driveForward();  break;
+    case 'B': driveBackward(); break;
+    case 'L': turnLeft();      break;
+    case 'R': turnRight();     break;
+    default:  stopMotors();    break;
+  }
+}
+
+// ─── Motor Control (Direct - used by BLE only) ────────────────────────────────
+
+void driveForward()  { move(currentSpeed, currentSpeed, 0, 1, 1, 0); }
+void driveBackward() { move(currentSpeed, currentSpeed, 1, 0, 0, 1); }
+void turnLeft()      { move(currentSpeed, currentSpeed, 1, 0, 1, 0); }
+void turnRight()     { move(currentSpeed, currentSpeed, 0, 1, 0, 1); }
+void stopMotors()    { move(0, 0, 0, 0, 0, 0); }
+
+void move(int sA, int sB, bool a1, bool a2, bool b1, bool b2) {
+  currentMotorA = sA;
+  currentMotorB = sB;
+  ledcWrite(PWMA, sA); digitalWrite(AIN1, a1); digitalWrite(AIN2, a2);
+  ledcWrite(PWMB, sB); digitalWrite(BIN1, b1); digitalWrite(BIN2, b2);
+}

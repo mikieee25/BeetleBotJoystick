@@ -1,34 +1,38 @@
-# ESP32 Setup Guide for BeetleBot
+# ESP32 Setup Guide for BeetleBot (PCB Edition + PS4 Controller)
 
-This guide will help you set up the ESP32 microcontroller to communicate with the BeetleBot React Native app.
+This guide covers setting up the ESP32 for the BeetleBot PCB edition, which supports both a **PS4 controller** (primary input) and the **React Native app via BLE** (secondary input).
+
+## Features
+
+- **PS4 Controller** — Tank mode and Classic mode driving
+- **Proportional claw control** via R2 trigger with smooth easing
+- **Brake system** via L2 trigger — gradual deceleration to full stop
+- **Joystick distance-based speed control** with exponential curve
+- **Motor speed ramping** — smooth acceleration and deceleration
+- **BLE fallback** — React Native app still works when PS4 is not connected
 
 ## Hardware Requirements
 
 - **ESP32 Development Board** (ESP32-WROOM-32 or similar)
-- **Motor Driver** (L298N or similar dual H-bridge)
+- **Motor Driver** (TB6612FNG or similar — PCB edition uses STBY/PWMA/PWMB/AIN/BIN layout)
 - **2x DC Motors** (for left and right wheels)
 - **1x Servo Motor** (SG90 or similar for claw)
-- **Power Supply** (7.4V-12V for motors, 5V for ESP32)
-- **Jumper wires** and **breadboard** (optional)
+- **PS4 DualShock 4 Controller**
+- **Power Supply** (7.4V–12V for motors, 5V for ESP32)
 
 ## Pin Connections
 
-### Left Motor (Motor A)
+### Motor Driver (PCB Edition)
 
 ```
-L298N Pin     → ESP32 Pin
-ENA (Speed)   → GPIO 25
-IN1           → GPIO 26
-IN2           → GPIO 27
-```
-
-### Right Motor (Motor B)
-
-```
-L298N Pin     → ESP32 Pin
-ENB (Speed)   → GPIO 32
-IN3           → GPIO 33
-IN4           → GPIO 14
+Driver Pin  → ESP32 Pin
+STBY        → GPIO 17
+PWMA        → GPIO 25
+PWMB        → GPIO 26
+AIN1        → GPIO 27
+AIN2        → GPIO 14
+BIN1        → GPIO 16
+BIN2        → GPIO 13
 ```
 
 ### Servo Motor (Claw)
@@ -40,14 +44,57 @@ VCC (5V)      → 5V
 GND           → GND
 ```
 
+### Status LED
+
+```
+LED → GPIO 2 (built-in or external)
+```
+
 ### Power Connections
 
 ```
-Motor Driver VCC  → 7.4V-12V Battery
+Motor Driver VCC  → 7.4V–12V Battery
 Motor Driver GND  → Common Ground
 ESP32 VIN         → 5V (USB or regulator)
 ESP32 GND         → Common Ground
 ```
+
+## PS4 Controller Pairing
+
+The sketch pairs with a specific PS4 controller MAC address. Before uploading, update the MAC address in `setup()`:
+
+```cpp
+PS4.begin("00:70:07:DF:8E:3E"); // Replace with your controller's MAC
+```
+
+To find your PS4 controller's Bluetooth MAC address, use a tool like **SixaxisPairTool** on Windows/Mac or check the controller's Bluetooth settings.
+
+## PS4 Controls
+
+| Button       | Action                                      |
+|--------------|---------------------------------------------|
+| D-Pad Left   | Switch to **Tank Mode** (Blue LED)          |
+| D-Pad Right  | Switch to **Classic Mode** (Green LED)      |
+| L1           | Decrease speed (step: 20, min: 60)          |
+| R1           | Increase speed (step: 20, max: 255)         |
+| L2 (analog)  | Brake — gradual deceleration to full stop   |
+| R2 (analog)  | Proportional claw close (smooth easing)     |
+
+### Tank Mode (default)
+- **Left stick** → controls left motor (forward/backward by Y-axis)
+- **Right stick** → controls right motor (forward/backward by Y-axis)
+- Stick distance from center maps to speed via exponential curve
+
+### Classic Mode
+- **Left stick Y** → forward / backward
+- **Right stick X** → turn left / right
+- Combining drive + turn reduces the inner wheel speed by 50%
+
+### LED Feedback
+- **Blue** → Tank mode active
+- **Green** → Classic mode active
+- **Red (intensity)** → Brake depth (brighter = harder braking)
+- **On (solid)** → BLE device connected
 
 ## Software Setup
 
@@ -70,12 +117,14 @@ Download and install Arduino IDE from: https://www.arduino.cc/en/software
 
 Go to **Sketch → Include Library → Manage Libraries** and install:
 
-1. **ArduinoJson** (by Benoit Blanchon) - version 6.x
-2. **ESP32Servo** (by Kevin Harrington)
+1. **ESP32Servo** (by Kevin Harrington)
+2. **PS4Controller** (by Juan Pablo Marquez / ps4-esp32)
+
+> **Note:** ArduinoJson is no longer required — this sketch uses simple string commands over BLE.
 
 ### 4. Upload the Sketch
 
-1. Open `BeetleBot_ESP32.ino` in Arduino IDE
+1. Open `BeetleBot_ESP32_wPS4Controller.ino` in Arduino IDE
 2. Select your board:
    - **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
 3. Select the correct COM port:
@@ -88,24 +137,58 @@ Go to **Sketch → Include Library → Manage Libraries** and install:
 1. Open **Tools → Serial Monitor** (set to 115200 baud)
 2. You should see:
    ```
-   BeetleBot ESP32 Starting...
-   BLE advertising started. Waiting for connection...
+   BeetleBot PCB + PS4 starting...
+   Features: Proportional Claw (R2) + Brake (L2) + Speed Curve + Motor Ramp
+   Servo test...
+   Servo test done. Claw open.
+   PS4: waiting for controller...
+   Ready! BLE advertising + PS4 pairing active.
+   Default mode: TANK | L2=Brake | R2=Claw
    ```
-3. The ESP32 is now discoverable as **"BeetleBot-ESP32"**
+3. The ESP32 is discoverable as **"BeetleBot-ESP32"** via BLE
+4. Press the PS button on your PS4 controller to connect
 
-## Testing the Connection
+## BLE UUIDs
 
-1. **Build and run** the React Native app on your phone/tablet
-2. **Tap the "Connect" button** in the app
-3. **Select "BeetleBot-ESP32"** from the device list
-4. Serial Monitor should show: `Device connected`
-5. Move the joystick - Serial Monitor will show received commands
+These UUIDs are used for the React Native app connection:
+
+```
+Service UUID:        0000ffe0-0000-1000-8000-00805f9b34fb
+Characteristic UUID: 0000ffe1-0000-1000-8000-00805f9b34fb
+```
+
+> These differ from the original sketch. Update the app's UUID configuration to match.
+
+## BLE Command Protocol (React Native App)
+
+When the PS4 controller is not connected, the app controls the robot via simple single-character BLE commands:
+
+| Command | Action                        |
+|---------|-------------------------------|
+| `F`     | Drive forward                 |
+| `B`     | Drive backward                |
+| `L`     | Turn left                     |
+| `R`     | Turn right                    |
+| `S`     | Stop                          |
+| `/`     | Stop (alternate)              |
+| `O`     | Open claw                     |
+| `C`     | Close claw                    |
+| `+`     | Increase speed                |
+| `MAX:<value>` | Set max speed (≤60 → 200, else 255) |
+
+> **Note:** The BLE timeout is 600 ms. If no command is received within that window, the motors stop automatically.
 
 ## Customization
 
-### Change Device Name
+### Change PS4 MAC Address
 
-Edit line 90 in `BeetleBot_ESP32.ino`:
+Edit in `setup()`:
+
+```cpp
+PS4.begin("00:70:07:DF:8E:3E"); // Replace with your controller's MAC
+```
+
+### Change Device Name
 
 ```cpp
 BLEDevice::init("BeetleBot-ESP32"); // Change this name
@@ -113,27 +196,54 @@ BLEDevice::init("BeetleBot-ESP32"); // Change this name
 
 ### Adjust Claw Angles
 
-Edit lines 40-41:
+```cpp
+#define CLAW_OPEN_ANGLE   90  // Adjust for your servo
+#define CLAW_CLOSED_ANGLE 3   // Adjust for your servo
+```
+
+### Adjust Speed Settings
 
 ```cpp
-#define CLAW_OPEN_ANGLE 90   // Adjust for your servo
-#define CLAW_CLOSED_ANGLE 0  // Adjust for your servo
+#define SPEED_DEFAULT  150   // Starting speed
+#define SPEED_MIN       60   // Minimum speed (L1 floor)
+#define SPEED_MAX      255   // Maximum speed (R1 ceiling)
+#define SPEED_STEP      20   // Speed change per L1/R1 press
+```
+
+### Adjust Speed Curve
+
+```cpp
+#define SPEED_EXPONENT   2.0  // Higher = more exponential feel
+#define SPEED_CURVE_TYPE 1    // 0=linear, 1=exponential, 2=smooth-step
+```
+
+### Adjust Motor Ramping
+
+```cpp
+#define MOTOR_RAMP_UP    25  // Max speed increase per loop tick
+#define MOTOR_RAMP_DOWN  35  // Max speed decrease per loop tick
+```
+
+### Adjust Brake Behavior
+
+```cpp
+#define BRAKE_FULL_STOP  200  // L2 value above this triggers instant stop
+#define BRAKE_DEADZONE    10  // L2 values below this are ignored
 ```
 
 ### Change Pin Assignments
 
-Edit the pin definitions at the top of the sketch (lines 25-38)
-
-### Adjust Gear Ratios
-
-Edit the `controlMotors()` function to change speed ratios:
+Edit the pin constants near the top of the sketch:
 
 ```cpp
-} else if (currentGear == "1") {
-  // Gear 1 - currently 50%, adjust as needed
-  leftSpeed = leftSpeed / 2;
-  rightSpeed = rightSpeed / 2;
-}
+const int STBY      = 17;
+const int PWMA      = 25;
+const int PWMB      = 26;
+const int AIN1      = 27;
+const int AIN2      = 14;
+const int BIN1      = 16;
+const int BIN2      = 13;
+const int SERVO_PIN = 15;
 ```
 
 ## Troubleshooting
@@ -144,107 +254,55 @@ Edit the `controlMotors()` function to change speed ratios:
 - Try a different USB cable (must support data transfer)
 - Press and hold BOOT button while uploading
 
+### PS4 Controller Not Connecting
+
+- Verify the MAC address in `PS4.begin(...)` matches your controller
+- Use SixaxisPairTool to check/set the pairing address
+- Hold PS + Share on the controller to enter pairing mode
+- Check Serial Monitor — it will print "PS4 controller connected!" on success
+
 ### Motors Not Responding
 
-- Check all connections (especially ground)
-- Verify motor driver power supply is connected
+- Check STBY pin is HIGH (GPIO 17) — motor driver is disabled if LOW
+- Verify all AIN/BIN/PWMA/PWMB connections
 - Test motors directly with battery to confirm they work
-- Check if motor driver enable jumpers are in place
+- Confirm motor driver power supply is connected
 
 ### Servo Not Moving
 
-- Verify servo is powered (needs 5V, not 3.3V)
-- Test servo separately with sweep example
-- Adjust `CLAW_OPEN_ANGLE` and `CLAW_CLOSED_ANGLE` values
+- Verify servo is powered from 5V, not 3.3V
+- Check Serial Monitor for the servo test sequence at startup
+- Adjust `CLAW_OPEN_ANGLE` and `CLAW_CLOSED_ANGLE` if range is wrong
 
 ### BLE Connection Issues
 
-- Make sure location permission is granted on phone
-- Make sure Bluetooth is enabled
-- Try scanning again
-- Check Serial Monitor for error messages
-- Restart ESP32 (press EN/RST button)
+- Make sure Bluetooth and location permissions are granted on phone
+- Verify the app UUIDs match the sketch UUIDs (see BLE UUIDs section above)
+- Restart ESP32 (press EN/RST button) and scan again
+- Check Serial Monitor shows "BLE: device connected"
 
-### No Commands Received
+### BLE Commands Ignored While PS4 Is Connected
 
-- Verify UUIDs match between app and ESP32
-- Check Serial Monitor shows "Device connected"
-- Ensure phone is within Bluetooth range (< 10 meters)
-
-## Command Protocol
-
-The app sends JSON commands via BLE:
-
-### Joystick Command
-
-```json
-{
-  "type": "joystick",
-  "leftSpeed": 75,
-  "rightSpeed": 50,
-  "gear": "2",
-  "clawOpen": false,
-  "timestamp": 1699036800000
-}
-```
-
-### Stop Command
-
-```json
-{
-  "type": "stop",
-  "leftSpeed": 0,
-  "rightSpeed": 0,
-  "gear": "1",
-  "clawOpen": false,
-  "timestamp": 1699036800000
-}
-```
-
-### Gear Change
-
-```json
-{
-  "type": "gear",
-  "leftSpeed": 0,
-  "rightSpeed": 0,
-  "gear": "R",
-  "clawOpen": false,
-  "timestamp": 1699036800000
-}
-```
-
-### Claw Control
-
-```json
-{
-  "type": "claw",
-  "leftSpeed": 0,
-  "rightSpeed": 0,
-  "gear": "1",
-  "clawOpen": true,
-  "timestamp": 1699036800000
-}
-```
+- This is expected behavior — PS4 input takes priority in the main loop
+- BLE timeout safety still applies when PS4 is disconnected
 
 ## Next Steps
 
-1. Test each control individually:
-
-   - Joystick forward/backward
-   - Joystick left/right turning
-   - Gear changes (2/1/R)
-   - Claw open/close
-
-2. Fine-tune motor speeds if needed
-3. Calibrate servo angles for proper claw operation
-4. Add additional sensors (ultrasonic, line following, etc.)
+1. Pair your PS4 controller and test each mode:
+   - Tank mode (D-Pad Left)
+   - Classic mode (D-Pad Right)
+2. Test L2 brake at various depths
+3. Test R2 proportional claw — should move smoothly from open to closed
+4. Connect the React Native app and verify BLE fallback works
+5. Calibrate `CLAW_OPEN_ANGLE` and `CLAW_CLOSED_ANGLE` for your servo
+6. Add additional sensors (ultrasonic, line following, etc.)
 
 ## Support
 
 For issues specific to:
 
 - **Arduino/ESP32**: Check ESP32 Arduino documentation
+- **PS4Controller library**: https://github.com/jvpernis/esp32-ps4
 - **React Native App**: Check app documentation
 - **Hardware**: Verify connections and power supply
 
