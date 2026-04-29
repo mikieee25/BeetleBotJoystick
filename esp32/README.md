@@ -61,13 +61,69 @@ ESP32 GND         → Common Ground
 
 ## PS4 Controller Pairing
 
-The sketch pairs with a specific PS4 controller MAC address. Before uploading, update the MAC address in `setup()`:
+The PS4Controller library works the other way around from what you might expect — **you don't pair the ESP32 to the controller, you set the controller's master Bluetooth address to the ESP32's MAC address**. Once the controller knows the ESP32's address, pressing the PS button will connect directly to it.
+
+### Step 1 — Get the ESP32's Bluetooth MAC Address
+
+Upload and run this small sketch to print the MAC address to Serial Monitor:
 
 ```cpp
-PS4.begin("00:70:07:DF:8E:3E"); // Replace with your controller's MAC
+#include "esp_bt_main.h"
+#include "esp_bt_device.h"
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
+
+void setup() {
+  Serial.begin(115200);
+  SerialBT.begin("BeetleBot-ESP32");
+
+  const uint8_t* mac = esp_bt_dev_get_address();
+  Serial.printf("ESP32 BT MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+void loop() {}
 ```
 
-To find your PS4 controller's Bluetooth MAC address, use a tool like **SixaxisPairTool** on Windows/Mac or check the controller's Bluetooth settings.
+Open **Serial Monitor at 115200 baud** — you'll see something like:
+
+```
+ESP32 BT MAC: 00:70:07:DF:8E:3E
+```
+> **If the sketch above doesn't work**, you can get the MAC address directly from the BeetleBot app instead:
+> 1. Open the **BeetleBot App** on your phone
+> 2. Tap the **Bluetooth icon** in the top-right corner — a device list will appear
+> 3. Scan for devices and find your ESP32 by the name you set (e.g. `BeetleBot-ESP32`)
+> 4. The MAC address is displayed below the device name (e.g. `00:70:07:DF:8E:3E`)
+
+> ## Copy that address.
+
+### Step 2 — Set the PS4 Controller's Master Address
+
+You need **SixaxisPairTool** to write the ESP32's MAC into the controller:
+
+1. Download **SixaxisPairTool** from: https://sixaxispairtool.en.lo4d.com/windows
+2. Connect your PS4 controller to your PC via **USB cable**
+3. Open SixaxisPairTool — it will show the controller's current master address
+4. Enter the ESP32's MAC address in the **"Change Master"** field
+5. Click **Update** — the controller now knows to connect to your ESP32
+
+### Step 3 — Update the Sketch
+
+Paste the ESP32's MAC address into `setup()` in the sketch:
+
+```cpp
+PS4.begin("00:70:07:DF:8E:3E"); // Your ESP32's BT MAC address
+```
+
+### Step 4 — Connect
+
+1. Upload the full BeetleBot sketch to the ESP32
+2. Disconnect the controller from USB
+3. Press the **PS button** — the controller will connect to the ESP32 automatically
+
+> **Note:** You only need to do Steps 1–3 once. After that, the controller will always connect to this ESP32 on PS button press.
 
 ## PS4 Controls
 
@@ -185,7 +241,7 @@ When the PS4 controller is not connected, the app controls the robot via simple 
 Edit in `setup()`:
 
 ```cpp
-PS4.begin("00:70:07:DF:8E:3E"); // Replace with your controller's MAC
+PS4.begin("00:70:07:DF:8E:3E"); // Replace with your ESP32's BT MAC address
 ```
 
 ### Change Device Name
